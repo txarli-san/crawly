@@ -77,6 +77,7 @@ type Enemy struct {
 	IdleTimer    float32 // time until next patrol direction change
 
 	HitFlash    float32 // >0 = recently hit, visual feedback
+	DeathTimer  float32 // >0 = playing death animation
 
 	// Status effects
 	FireTimer   float32
@@ -365,9 +366,11 @@ func (g *GameState) updateEnemies(dt float32) {
 	for i := range g.Enemies {
 		e := &g.Enemies[i]
 		if !e.Alive {
+			if e.DeathTimer > 0 {
+				e.DeathTimer -= dt
+			}
 			continue
 		}
-
 
 		if e.HitFlash > 0 {
 			e.HitFlash -= dt
@@ -910,6 +913,7 @@ func (g *GameState) damagePlayer(dmg int) {
 func (g *GameState) killEnemy(idx int) {
 	e := &g.Enemies[idx]
 	e.Alive = false
+	e.DeathTimer = 1.0 // show death animation for 1 second
 	g.Score += 10 * (int(e.Type) + 1)
 	g.AddFloat("SLAIN", e.X, e.Z, 255, 200, 60, 16)
 

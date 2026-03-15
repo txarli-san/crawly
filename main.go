@@ -95,6 +95,10 @@ func main() {
 	skelMageAnim := loadAnimatedModel("assets/models/characters/animated/Skeleton_Mage.glb")
 	defer skelMageAnim.Unload()
 
+	skelMinionAnim.GearBindings = skeletonGearBindings(EnemyMinion)
+	skelWarriorAnim.GearBindings = skeletonGearBindings(EnemyWarrior)
+	skelMageAnim.GearBindings = skeletonGearBindings(EnemyMage)
+
 	skelModels := map[EnemyType]*AnimatedModel{
 		EnemyMinion:  skelMinionAnim,
 		EnemyWarrior: skelWarriorAnim,

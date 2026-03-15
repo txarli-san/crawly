@@ -214,6 +214,28 @@ func gearBindings(class string) []GearBinding {
 	return nil
 }
 
+func skeletonGearBindings(etype EnemyType) []GearBinding {
+	none := GearBinding{-1}
+	switch etype {
+	case EnemyMinion:
+		// 9 meshes: 0-2 body, 3 cloak(chest), 4-8 body
+		return []GearBinding{
+			none, none, none, {3}, none, none, none, none, none,
+		}
+	case EnemyWarrior:
+		// 10 meshes: 0 armL, 1 helmet(head), 2 armR, 3 body, 4 cloak(chest), 5-9 body
+		return []GearBinding{
+			none, {14}, none, none, {3}, none, none, none, none, none,
+		}
+	case EnemyMage:
+		// 9 meshes: 0 armL, 1 hat(head), 2 armR, 3-8 body
+		return []GearBinding{
+			none, {14}, none, none, none, none, none, none, none,
+		}
+	}
+	return nil
+}
+
 type AnimState struct {
 	Clip  string
 	Frame int32
@@ -421,15 +443,17 @@ func drawScene(
 	// Draw enemies
 	for i := range game.Enemies {
 		e := &game.Enemies[i]
-		if !e.Alive {
+		if !e.Alive && e.DeathTimer <= 0 {
 			continue
 		}
 		ePos := rl.Vector3{X: e.X, Y: charYOffset, Z: e.Z}
 
 		// Tint from status effects and awareness state
 		tint := rl.White
-		if e.HitFlash > 0 {
-			tint = rl.Color{R: 255, G: 255, B: 255, A: 255} // white flash
+		if !e.Alive {
+			tint = rl.Color{R: 160, G: 160, B: 160, A: 255}
+		} else if e.HitFlash > 0 {
+			tint = rl.Color{R: 255, G: 255, B: 255, A: 255}
 		} else if e.FireTimer > 0 {
 			tint = rl.Color{R: 255, G: 150, B: 80, A: 255}
 		} else if e.IceTimer > 0 {
@@ -447,11 +471,15 @@ func drawScene(
 			eScale = rl.Vector3{X: charScale * bump, Y: charScale * bump, Z: charScale * bump}
 		}
 
-		// Enemy animation — hit reaction takes priority, then movement
-		isHitAnim := e.Anim.Clip == "Hit_A"
-		if e.HitFlash > 0.1 && !isHitAnim {
+		// Enemy animation — death is final, then hit, then movement
+		if !e.Alive {
+			// Dead: play Death_A once, hold last frame until removed.
+			if e.Anim.Clip != "Death_A" {
+				e.Anim = AnimState{Clip: "Death_A", Loop: false}
+			}
+		} else if e.HitFlash > 0.1 && e.Anim.Clip != "Hit_A" {
 			e.Anim = AnimState{Clip: "Hit_A", Loop: false}
-		} else if isHitAnim && !e.Anim.Done {
+		} else if (e.Anim.Clip == "Hit_A") && !e.Anim.Done {
 			// Let hit play
 		} else {
 			wantClip := "Idle"
@@ -472,7 +500,11 @@ func drawScene(
 
 		if am, ok := skelModels[e.Type]; ok {
 			am.UpdateAnim(&e.Anim, dt)
-			rl.DrawModelEx(*am.Model, ePos, rl.Vector3{Y: 1}, e.FacingAngle, eScale, tint)
+			allVis := make([]bool, am.Model.MeshCount)
+			for vi := range allVis {
+				allVis[vi] = true
+			}
+			am.DrawFiltered(allVis, ePos, rl.Vector3{Y: 1}, e.FacingAngle, eScale, tint)
 		}
 
 		// HP bar
@@ -501,30 +533,43 @@ func drawScene(
 		}
 	}
 
-	// Player animation — decoupled from gameplay. Movement/attack cancels old anim.
-	isAttackAnim := p.Anim.Clip == "1H_Melee_Attack_Chop" || p.Anim.Clip == "1H_Melee_Attack_Slice"
-	if p.MeleeTimer > 0 && p.Class != ClassMage && !isAttackAnim {
-		// New swing — start attack anim
-		clip := "1H_Melee_Attack_Chop"
-		if int(rl.GetTime()*10)%2 == 0 {
-			clip = "1H_Melee_Attack_Slice"
+	// Player animation — decoupled from gameplay. Actions cancel old anim.
+	meleeClips := map[string]bool{
+		"1H_Melee_Attack_Chop": true, "1H_Melee_Attack_Slice_Diagonal": true,
+		"1H_Melee_Attack_Slice_Horizonta": true, "1H_Melee_Attack_Stab": true,
+	}
+	blockClips := map[string]bool{"Block": true, "Blocking": true, "Block_Hit": true}
+	oneShot := meleeClips[p.Anim.Clip] || blockClips[p.Anim.Clip] || p.Anim.Clip == "Spellcast_Shoot" || p.Anim.Clip == "Dodge_Forward"
+
+	if p.Class == ClassWarrior && p.BlockTimer > 0 {
+		// Blocking stance
+		if !blockClips[p.Anim.Clip] {
+			p.Anim = AnimState{Clip: "Block", Loop: false}
+		} else if p.Anim.Done {
+			p.Anim = AnimState{Clip: "Blocking", Loop: true}
 		}
-		p.Anim = AnimState{Clip: clip, Loop: false}
-	} else if p.Moving && isAttackAnim {
-		// Movement cancels attack anim
-		p.Anim = AnimState{Clip: "Walking_A", Loop: true}
-	} else if isAttackAnim && p.Anim.Done {
-		p.Anim = AnimState{Clip: "Idle_Combat", Loop: true}
-	} else if !isAttackAnim {
-		if p.Moving {
-			if p.Anim.Clip != "Walking_A" {
-				p.Anim = AnimState{Clip: "Walking_A", Loop: true}
-			}
-		} else if p.Anim.Clip != "Idle" && p.Anim.Clip != "Idle_Combat" {
-			idle := "Idle"
-			if p.Class == ClassWarrior {
-				idle = "Idle_Combat"
-			}
+	} else if p.MeleeTimer > 0 && p.Class == ClassWarrior && !meleeClips[p.Anim.Clip] {
+		// Start melee attack — rotate between 3 attacks
+		clips := []string{"1H_Melee_Attack_Chop", "1H_Melee_Attack_Slice_Diagonal", "1H_Melee_Attack_Slice_Horizonta"}
+		p.Anim = AnimState{Clip: clips[int(rl.GetTime()*5)%len(clips)], Loop: false}
+	} else if p.Class == ClassMage && p.FireTimer > 0.8/p.Stats.FireRate && p.Anim.Clip != "Spellcast_Shoot" {
+		// Mage cast animation on shoot
+		p.Anim = AnimState{Clip: "Spellcast_Shoot", Loop: false}
+	} else if p.DodgeTimer > 0 && p.Anim.Clip != "Dodge_Forward" {
+		p.Anim = AnimState{Clip: "Dodge_Forward", Loop: false}
+	} else if p.Moving && (p.Anim.Done || !oneShot) {
+		// Movement cancels finished one-shots
+		if p.Anim.Clip != "Walking_A" && p.Anim.Clip != "Running_A" {
+			p.Anim = AnimState{Clip: "Walking_A", Loop: true}
+		}
+	} else if oneShot && !p.Anim.Done {
+		// Let one-shot play
+	} else if !p.Moving {
+		idle := "Idle"
+		if p.Class == ClassWarrior {
+			idle = "Idle_Combat"
+		}
+		if p.Anim.Clip != idle {
 			p.Anim = AnimState{Clip: idle, Loop: true}
 		}
 	}
