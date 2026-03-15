@@ -882,6 +882,29 @@ func (g *GameState) damagePlayer(dmg int) {
 	p.InvulnTimer = 0.8
 	p.TimeSinceHit = 0
 	g.AddFloat(fmt.Sprintf("-%d", dmg), p.X, p.Z, 255, 60, 60, 20)
+
+	// Thorns: reflect damage to nearby enemies
+	if p.Stats.ThornsStacks > 0 {
+		thornsDmg := p.Stats.ThornsStacks * 2
+		tu := g.TileUnit
+		for i := range g.Enemies {
+			e := &g.Enemies[i]
+			if !e.Alive {
+				continue
+			}
+			dx := e.X - p.X
+			dz := e.Z - p.Z
+			dist := float32(math.Sqrt(float64(dx*dx + dz*dz)))
+			if dist < 2.5*tu {
+				e.HP -= thornsDmg
+				e.HitFlash = 0.1
+				g.AddFloat(fmt.Sprintf("-%d", thornsDmg), e.X, e.Z, 200, 100, 255, 14)
+				if e.HP <= 0 {
+					g.killEnemy(i)
+				}
+			}
+		}
+	}
 }
 
 func (g *GameState) killEnemy(idx int) {
@@ -900,7 +923,7 @@ func (g *GameState) killEnemy(idx int) {
 	// Item drop chance
 	dropChance := 0.30
 	if g.Rng.Float64() < dropChance {
-		item := RollItemDrop(g.Rng, g.CurrentRoom.Depth)
+		item := RollItemDrop(g.Rng, g.CurrentRoom.Depth, g.Player.Class)
 		g.ItemDrops = append(g.ItemDrops, ItemDrop{
 			X: e.X - g.TileUnit*0.2, Z: e.Z, Item: item, Timer: 0,
 		})
@@ -1220,7 +1243,16 @@ func (g *GameState) updateMeleeAttack(dt float32) {
 			e.PoisonDmg = float32(p.Stats.PoisonStacks) * 1.0
 		}
 
-		// Knockback — melee hits push hard
+		// Lifesteal: heal on every melee hit
+		if p.Stats.LifestealStacks > 0 {
+			p.HP += p.Stats.LifestealStacks
+			if p.HP > p.MaxHP {
+				p.HP = p.MaxHP
+			}
+			g.AddFloat(fmt.Sprintf("+%d", p.Stats.LifestealStacks), p.X, p.Z, 80, 255, 80, 14)
+		}
+
+		// Knockback
 		if dist > 0.01 {
 			e.X += (dx / dist) * tu * 1.0
 			e.Z += (dz / dist) * tu * 1.0
@@ -1229,6 +1261,10 @@ func (g *GameState) updateMeleeAttack(dt float32) {
 
 		if e.HP <= 0 {
 			g.killEnemy(i)
+			// Shockwave on kill
+			if p.Stats.ShockwaveStacks > 0 {
+				g.spawnExplosion(e.X, e.Z, p.Stats.Damage*0.5, 0)
+			}
 			if p.Stats.VampiricStacks > 0 {
 				heal := p.Stats.VampiricStacks
 				p.HP += heal

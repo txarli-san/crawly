@@ -21,6 +21,15 @@ const (
 	TagShield               // absorb 1 hit per stack (per room)
 	TagChain                // damage chains to +1 nearby enemy per stack
 	TagGiant                // +40% projectile size per stack
+
+	// Melee tags (Warrior)
+	TagCleave               // +30 degrees arc per stack
+	TagLifesteal            // heal on melee hit
+	TagThorns               // reflect damage when hit
+	TagShockwave            // AoE burst on kill
+	TagFury                 // faster swings per stack
+	TagReach                // +0.5 melee range per stack
+
 	TagCount
 )
 
@@ -29,7 +38,9 @@ type ItemDef struct {
 	Name   string
 	Desc   string
 	Tags   [TagCount]int
-	Rarity int // 1=common, 2=uncommon, 3=rare
+	Rarity int         // 1=common, 2=uncommon, 3=rare
+	Class  PlayerClass // 0=mage (default), 1=warrior. -1 would mean shared but we use 0/1.
+	Shared bool        // true = available to all classes
 }
 
 // Helper to build tag arrays concisely.
@@ -42,59 +53,75 @@ func itags(pairs ...int) [TagCount]int {
 }
 
 var AllItemDefs = []ItemDef{
-	// --- Common (Rarity 1) ---
-	{Name: "Iron Tip", Desc: "+25% damage", Rarity: 1,
+	// ===== SHARED (both classes) =====
+	{Name: "Iron Tip", Desc: "+25% damage", Rarity: 1, Shared: true,
 		Tags: itags(int(TagDamageUp), 1)},
-	{Name: "Swift Boots", Desc: "+15% move speed", Rarity: 1,
+	{Name: "Swift Boots", Desc: "+15% move speed", Rarity: 1, Shared: true,
 		Tags: itags(int(TagSpeedUp), 1)},
-	{Name: "Rapid Fire", Desc: "+20% fire rate", Rarity: 1,
-		Tags: itags(int(TagFireRateUp), 1)},
-	{Name: "Heart Container", Desc: "+2 max HP", Rarity: 1,
+	{Name: "Heart Container", Desc: "+2 max HP", Rarity: 1, Shared: true,
 		Tags: itags(int(TagMaxHPUp), 2)},
-	{Name: "Flame Shard", Desc: "Projectiles burn", Rarity: 1,
+	{Name: "Flame Shard", Desc: "Attacks burn", Rarity: 1, Shared: true,
 		Tags: itags(int(TagFire), 1)},
-	{Name: "Frost Core", Desc: "Projectiles slow", Rarity: 1,
+	{Name: "Frost Core", Desc: "Attacks slow", Rarity: 1, Shared: true,
 		Tags: itags(int(TagIce), 1)},
-	{Name: "Venom Gland", Desc: "Projectiles poison", Rarity: 1,
+	{Name: "Venom Gland", Desc: "Attacks poison", Rarity: 1, Shared: true,
 		Tags: itags(int(TagPoison), 1)},
-	{Name: "Rubber Ball", Desc: "+2 wall bounces", Rarity: 1,
-		Tags: itags(int(TagBounce), 1)},
-
-	// --- Uncommon (Rarity 2) ---
-	{Name: "Prism Lens", Desc: "+2 extra shots", Rarity: 2,
-		Tags: itags(int(TagSplit), 1)},
-	{Name: "Ghost Arrow", Desc: "Pierce 1 enemy", Rarity: 2,
-		Tags: itags(int(TagPierce), 1)},
-	{Name: "Seeking Eye", Desc: "Homing projectiles", Rarity: 2,
-		Tags: itags(int(TagHoming), 1)},
-	{Name: "Blood Ruby", Desc: "Heal on kill", Rarity: 2,
+	{Name: "Blood Ruby", Desc: "Heal on kill", Rarity: 2, Shared: true,
 		Tags: itags(int(TagVampiric), 1)},
-	{Name: "Bomb Seed", Desc: "Explosive shots", Rarity: 2,
-		Tags: itags(int(TagExplosive), 1)},
-	{Name: "Barrier Gem", Desc: "Shield: absorb 1 hit", Rarity: 2,
+	{Name: "Barrier Gem", Desc: "Shield: absorb 1 hit", Rarity: 2, Shared: true,
 		Tags: itags(int(TagShield), 1)},
-	{Name: "Chain Link", Desc: "Damage chains to +1 enemy", Rarity: 2,
-		Tags: itags(int(TagChain), 1)},
-	{Name: "Growth Elixir", Desc: "+40% projectile size", Rarity: 2,
-		Tags: itags(int(TagGiant), 1)},
-
-	// --- Rare (Rarity 3) — multi-tag items ---
-	{Name: "Demon Horn", Desc: "Damage + Fire", Rarity: 3,
+	{Name: "Demon Horn", Desc: "Damage + Fire", Rarity: 3, Shared: true,
 		Tags: itags(int(TagDamageUp), 2, int(TagFire), 1)},
-	{Name: "Frozen Heart", Desc: "HP + Ice", Rarity: 3,
+	{Name: "Frozen Heart", Desc: "HP + Ice", Rarity: 3, Shared: true,
 		Tags: itags(int(TagMaxHPUp), 2, int(TagIce), 1)},
-	{Name: "Scatter Shot", Desc: "Split + Pierce", Rarity: 3,
+
+	// ===== MAGE =====
+	{Name: "Rapid Fire", Desc: "+20% fire rate", Rarity: 1, Class: ClassMage,
+		Tags: itags(int(TagFireRateUp), 1)},
+	{Name: "Rubber Ball", Desc: "+2 wall bounces", Rarity: 1, Class: ClassMage,
+		Tags: itags(int(TagBounce), 1)},
+	{Name: "Prism Lens", Desc: "+2 extra shots", Rarity: 2, Class: ClassMage,
+		Tags: itags(int(TagSplit), 1)},
+	{Name: "Ghost Arrow", Desc: "Pierce 1 enemy", Rarity: 2, Class: ClassMage,
+		Tags: itags(int(TagPierce), 1)},
+	{Name: "Seeking Eye", Desc: "Homing projectiles", Rarity: 2, Class: ClassMage,
+		Tags: itags(int(TagHoming), 1)},
+	{Name: "Bomb Seed", Desc: "Explosive shots", Rarity: 2, Class: ClassMage,
+		Tags: itags(int(TagExplosive), 1)},
+	{Name: "Chain Link", Desc: "Chains to +1 enemy", Rarity: 2, Class: ClassMage,
+		Tags: itags(int(TagChain), 1)},
+	{Name: "Growth Elixir", Desc: "+40% projectile size", Rarity: 2, Class: ClassMage,
+		Tags: itags(int(TagGiant), 1)},
+	{Name: "Scatter Shot", Desc: "Split + Pierce", Rarity: 3, Class: ClassMage,
 		Tags: itags(int(TagSplit), 1, int(TagPierce), 1)},
-	{Name: "Bouncing Bomb", Desc: "Bounce + Explosive", Rarity: 3,
+	{Name: "Bouncing Bomb", Desc: "Bounce + Explosive", Rarity: 3, Class: ClassMage,
 		Tags: itags(int(TagBounce), 1, int(TagExplosive), 1)},
-	{Name: "Vampiric Burst", Desc: "Vampiric + Chain", Rarity: 3,
-		Tags: itags(int(TagVampiric), 1, int(TagChain), 1)},
-	{Name: "Inferno Lens", Desc: "Fire + Split", Rarity: 3,
+	{Name: "Inferno Lens", Desc: "Fire + Split", Rarity: 3, Class: ClassMage,
 		Tags: itags(int(TagFire), 1, int(TagSplit), 1)},
-	{Name: "Frost Giant", Desc: "Ice + Giant", Rarity: 3,
-		Tags: itags(int(TagIce), 1, int(TagGiant), 1)},
-	{Name: "Toxic Missiles", Desc: "Poison + Homing", Rarity: 3,
+	{Name: "Toxic Missiles", Desc: "Poison + Homing", Rarity: 3, Class: ClassMage,
 		Tags: itags(int(TagPoison), 1, int(TagHoming), 1)},
+
+	// ===== WARRIOR =====
+	{Name: "Whetstone", Desc: "+30° swing arc", Rarity: 1, Class: ClassWarrior,
+		Tags: itags(int(TagCleave), 1)},
+	{Name: "Battle Fury", Desc: "Faster swings", Rarity: 1, Class: ClassWarrior,
+		Tags: itags(int(TagFury), 1)},
+	{Name: "Long Blade", Desc: "+0.5 reach", Rarity: 1, Class: ClassWarrior,
+		Tags: itags(int(TagReach), 1)},
+	{Name: "Leech Fang", Desc: "Heal on melee hit", Rarity: 2, Class: ClassWarrior,
+		Tags: itags(int(TagLifesteal), 1)},
+	{Name: "Spiked Armor", Desc: "Reflect damage", Rarity: 2, Class: ClassWarrior,
+		Tags: itags(int(TagThorns), 1)},
+	{Name: "War Drum", Desc: "AoE burst on kill", Rarity: 2, Class: ClassWarrior,
+		Tags: itags(int(TagShockwave), 1)},
+	{Name: "Berserker Axe", Desc: "Damage + Fury", Rarity: 3, Class: ClassWarrior,
+		Tags: itags(int(TagDamageUp), 2, int(TagFury), 1)},
+	{Name: "Thorn Mail", Desc: "Thorns + HP", Rarity: 3, Class: ClassWarrior,
+		Tags: itags(int(TagThorns), 1, int(TagMaxHPUp), 3)},
+	{Name: "Cleaving Flame", Desc: "Cleave + Fire", Rarity: 3, Class: ClassWarrior,
+		Tags: itags(int(TagCleave), 1, int(TagFire), 1)},
+	{Name: "Vampiric Blade", Desc: "Lifesteal + Reach", Rarity: 3, Class: ClassWarrior,
+		Tags: itags(int(TagLifesteal), 1, int(TagReach), 1)},
 }
 
 // PlayerStats computed from class base + accumulated item tags.
@@ -125,6 +152,14 @@ type PlayerStats struct {
 	ShieldStacks    int
 	ChainStacks     int
 	GiantStacks     int
+
+	// Melee stacks
+	CleaveStacks    int
+	LifestealStacks int
+	ThornsStacks    int
+	ShockwaveStacks int
+	FuryStacks      int
+	ReachStacks     int
 }
 
 // ComputeStats calculates effective stats from class + collected items.
@@ -179,13 +214,27 @@ func ComputeStats(class PlayerClass, items []*ItemDef) PlayerStats {
 		ShieldStacks:    tags[TagShield],
 		ChainStacks:     tags[TagChain],
 		GiantStacks:     tags[TagGiant],
+
+		CleaveStacks:    tags[TagCleave],
+		LifestealStacks: tags[TagLifesteal],
+		ThornsStacks:    tags[TagThorns],
+		ShockwaveStacks: tags[TagShockwave],
+		FuryStacks:      tags[TagFury],
+		ReachStacks:     tags[TagReach],
+	}
+
+	// Apply melee tags to stats
+	s.MeleeArc += float32(s.CleaveStacks) * 30
+	s.MeleeRange += float32(s.ReachStacks) * 0.5
+	if s.FuryStacks > 0 {
+		s.MeleeCooldown *= 1.0 / (1.0 + 0.2*float32(s.FuryStacks))
 	}
 
 	return s
 }
 
 // RollItemDrop picks a random item based on depth-scaled rarity weights.
-func RollItemDrop(rng interface{ Float64() float64; Intn(int) int }, depth int) *ItemDef {
+func RollItemDrop(rng interface{ Float64() float64; Intn(int) int }, depth int, class PlayerClass) *ItemDef {
 	// Higher depth → better rarity odds
 	// Base weights: common=60, uncommon=30, rare=10
 	// Per depth: common-2, uncommon+1, rare+1 (clamped)
@@ -213,11 +262,15 @@ func RollItemDrop(rng interface{ Float64() float64; Intn(int) int }, depth int) 
 		targetRarity = 3
 	}
 
-	// Collect items of target rarity
+	// Collect items of target rarity matching class
 	var candidates []*ItemDef
 	for i := range AllItemDefs {
-		if AllItemDefs[i].Rarity == targetRarity {
-			candidates = append(candidates, &AllItemDefs[i])
+		item := &AllItemDefs[i]
+		if item.Rarity != targetRarity {
+			continue
+		}
+		if item.Shared || item.Class == class {
+			candidates = append(candidates, item)
 		}
 	}
 	if len(candidates) == 0 {
