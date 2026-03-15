@@ -104,6 +104,8 @@ func (lm *LootModels) Unload() {
 type PropModels struct {
 	Models []rl.Model
 	Scales []rl.Vector3
+	Extents []float32 // max half-extent in X or Z after scaling
+	YOffsets []float32 // lift to compensate for models with geometry below origin
 }
 
 var propModelPaths = [PropCount]string{
@@ -150,7 +152,7 @@ var propScaleFactors = [PropCount]float32{
 	PropBookA: 0.8, PropBookOpenA: 0.8, PropSpellBook: 0.8,
 	PropTableLarge: 1.2, PropChair: 1.0,
 	PropMug: 0.8, PropPlate: 0.8, PropPlateFull: 0.8,
-	PropPillar: 1.0, PropPillarBroken: 1.0,
+	PropPillar: 0.4, PropPillarBroken: 0.4,
 	PropBricks: 1.0, PropFloorDecoShattered: 1.0,
 	PropTileSpikes: 1.0, PropTileSpikesLarge: 1.0,
 	PropTorchWall: 1.0, PropFloorDecoTiles: 1.0,
@@ -158,8 +160,10 @@ var propScaleFactors = [PropCount]float32{
 
 func LoadPropModels(shader rl.Shader, wallScale float32) *PropModels {
 	pm := &PropModels{
-		Models: make([]rl.Model, PropCount),
-		Scales: make([]rl.Vector3, PropCount),
+		Models:   make([]rl.Model, PropCount),
+		Scales:   make([]rl.Vector3, PropCount),
+		Extents:  make([]float32, PropCount),
+		YOffsets: make([]float32, PropCount),
 	}
 	for i := 0; i < PropCount; i++ {
 		path := "assets/models/dungeon/" + propModelPaths[i]
@@ -167,6 +171,13 @@ func LoadPropModels(shader rl.Shader, wallScale float32) *PropModels {
 		applyShaderToModel(pm.Models[i], shader)
 		s := wallScale * propScaleFactors[i] * 3.0
 		pm.Scales[i] = rl.Vector3{X: s, Y: s, Z: s}
+		bb := rl.GetModelBoundingBox(pm.Models[i])
+		extX := float32(math.Max(math.Abs(float64(bb.Max.X)), math.Abs(float64(bb.Min.X)))) * s
+		extZ := float32(math.Max(math.Abs(float64(bb.Max.Z)), math.Abs(float64(bb.Min.Z)))) * s
+		pm.Extents[i] = float32(math.Max(float64(extX), float64(extZ)))
+		if bb.Min.Y < 0 {
+			pm.YOffsets[i] = -bb.Min.Y * s
+		}
 	}
 	return pm
 }
@@ -441,30 +452,36 @@ func drawScene(
 				// Floor underneath
 				fm := floorVariant(tx, tz)
 				rl.DrawModelEx(fm, pos, rl.Vector3{Y: 1}, 0, ones, rl.Color{R: 180, G: 180, B: 180, A: 255})
-				// Pillar cube
+				// Pillar model
 				pillarPos := pos
-				pillarPos.Y = floorSurfaceY + tileUnit*0.5
-				rl.DrawCubeV(pillarPos, rl.Vector3{X: tileUnit * 0.5, Y: tileUnit * 1.0, Z: tileUnit * 0.5},
-					rl.Color{R: 100, G: 95, B: 90, A: 255})
+				pillarPos.Y = floorSurfaceY + propModels.YOffsets[PropPillar]
+				rl.DrawModelEx(propModels.Models[PropPillar], pillarPos, rl.Vector3{Y: 1}, 0, propModels.Scales[PropPillar], rl.White)
 			}
 		}
 	}
 
 	// Draw props
 	if room.Props != nil && propModels != nil {
-		halfTileOff := tileUnit * 0.35
 		for key, prop := range room.Props {
 			propPos := tileToWorld(key[0], key[1])
-			propPos.Y = floorSurfaceY
-			switch prop.Wall {
-			case 0:
-				propPos.Z -= halfTileOff
-			case 1:
-				propPos.Z += halfTileOff
-			case 2:
-				propPos.X -= halfTileOff
-			case 3:
-				propPos.X += halfTileOff
+			propPos.Y = floorSurfaceY + propModels.YOffsets[prop.Model]
+			if prop.Wall >= 0 {
+				ext := propModels.Extents[prop.Model]
+				margin := tileUnit * 0.05
+				off := halfTile - ext - margin
+				if off < 0 {
+					off = 0
+				}
+				switch prop.Wall {
+				case 0:
+					propPos.Z -= off
+				case 1:
+					propPos.Z += off
+				case 2:
+					propPos.X -= off
+				case 3:
+					propPos.X += off
+				}
 			}
 			rl.DrawModelEx(propModels.Models[prop.Model], propPos, rl.Vector3{Y: 1}, prop.Rotation, propModels.Scales[prop.Model], rl.White)
 		}
