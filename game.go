@@ -74,6 +74,8 @@ type Enemy struct {
 	IdleAngle    float32 // patrol wander direction
 	IdleTimer    float32 // time until next patrol direction change
 
+	HitFlash    float32 // >0 = recently hit, visual feedback
+
 	// Status effects
 	FireTimer   float32
 	FireDamage  float32
@@ -358,6 +360,10 @@ func (g *GameState) updateEnemies(dt float32) {
 			continue
 		}
 
+
+		if e.HitFlash > 0 {
+			e.HitFlash -= dt
+		}
 
 		// Status effect ticks
 		if e.FireTimer > 0 {
@@ -687,9 +693,10 @@ func (g *GameState) checkCollisions() {
 			ddz := e.Z - proj.Z
 			dist := float32(math.Sqrt(float64(ddx*ddx + ddz*ddz)))
 			if dist < (proj.Radius+colliderRadius*tu) {
-				// Direct hit — consistent damage
+				// Direct hit
 				dmg := int(proj.Damage)
 				e.HP -= dmg
+				e.HitFlash = 0.1
 				g.AddFloat(fmt.Sprintf("-%d", dmg), e.X, e.Z, 255, 255, 200, 16)
 
 				// Apply status effects
@@ -835,6 +842,19 @@ func (g *GameState) damagePlayer(dmg int) {
 		p.InvulnTimer = 0.3
 		return
 	}
+
+	// Warrior: block during melee swing (shield up while attacking)
+	if p.Class == ClassWarrior && p.MeleeTimer > 0 {
+		g.AddFloat("PARRY", p.X, p.Z, 255, 220, 80, 18)
+		p.InvulnTimer = 0.2
+		return
+	}
+
+	// Warrior: passive armor reduces all damage by 1 (min 1)
+	if p.Class == ClassWarrior && dmg > 1 {
+		dmg--
+	}
+
 	p.HP -= dmg
 	p.InvulnTimer = 0.8
 	p.TimeSinceHit = 0
@@ -1079,17 +1099,17 @@ func (g *GameState) alertAllInRadius(wx, wz, radius float32) {
 
 func (g *GameState) StartMeleeAttack() {
 	p := &g.Player
-	p.MeleeTimer = 0.2
+	p.MeleeTimer = 0.3
 	p.MeleeCooldown = p.Stats.MeleeCooldown
 	p.MeleeHit = make(map[int]bool)
 	g.makeNoise(p.X, p.Z)
 
-	// Dash-strike: short lunge forward
+	// Dash-strike: lunge forward into enemies
 	angle := p.FacingAngle * math.Pi / 180
-	lungeSpeed := float32(10.0) * g.TileUnit
+	lungeSpeed := float32(14.0) * g.TileUnit
 	p.DodgeVX = float32(math.Sin(float64(angle))) * lungeSpeed
 	p.DodgeVZ = float32(math.Cos(float64(angle))) * lungeSpeed
-	p.DodgeTimer = 0.08 // very short lunge, no i-frames
+	p.DodgeTimer = 0.12
 }
 
 func (g *GameState) updateMeleeAttack(dt float32) {
@@ -1140,6 +1160,7 @@ func (g *GameState) updateMeleeAttack(dt float32) {
 		p.MeleeHit[i] = true
 		dmg := int(p.Stats.Damage)
 		e.HP -= dmg
+		e.HitFlash = 0.15
 		g.AddFloat(fmt.Sprintf("-%d", dmg), e.X, e.Z, 255, 255, 200, 16)
 
 		// Apply status effects from items
@@ -1155,10 +1176,10 @@ func (g *GameState) updateMeleeAttack(dt float32) {
 			e.PoisonDmg = float32(p.Stats.PoisonStacks) * 1.0
 		}
 
-		// Knockback
+		// Knockback — melee hits push hard
 		if dist > 0.01 {
-			e.X += (dx / dist) * tu * 0.5
-			e.Z += (dz / dist) * tu * 0.5
+			e.X += (dx / dist) * tu * 1.0
+			e.Z += (dz / dist) * tu * 1.0
 			e.X, e.Z = g.resolveWallCollision(e.X, e.Z, colliderRadius*tu)
 		}
 

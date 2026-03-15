@@ -428,36 +428,51 @@ func drawScene(
 
 		// Tint from status effects and awareness state
 		tint := rl.White
-		if e.FireTimer > 0 {
+		if e.HitFlash > 0 {
+			tint = rl.Color{R: 255, G: 255, B: 255, A: 255} // white flash
+		} else if e.FireTimer > 0 {
 			tint = rl.Color{R: 255, G: 150, B: 80, A: 255}
 		} else if e.IceTimer > 0 {
 			tint = rl.Color{R: 150, G: 200, B: 255, A: 255}
 		} else if e.PoisonTimer > 0 {
 			tint = rl.Color{R: 100, G: 255, B: 100, A: 255}
 		} else if e.State == StateIdle {
-			tint = rl.Color{R: 180, G: 180, B: 200, A: 255} // unaware = muted
+			tint = rl.Color{R: 180, G: 180, B: 200, A: 255}
 		}
 
-		wantClip := "Idle"
-		if e.State == StateIdle {
-			if e.Moving {
-				wantClip = "Walking_A"
-			} else {
-				wantClip = "Idle"
-			}
-		} else {
-			wantClip = "Idle_Combat"
-			if e.Moving {
-				wantClip = "Walking_A"
-			}
+		// Scale bump on hit
+		eScale := charScaleVec
+		if e.HitFlash > 0 {
+			bump := float32(1.0) + e.HitFlash*2.0
+			eScale = rl.Vector3{X: charScale * bump, Y: charScale * bump, Z: charScale * bump}
 		}
-		if e.Anim.Clip != wantClip {
-			e.Anim = AnimState{Clip: wantClip, Loop: true}
+
+		// Enemy animation — hit reaction takes priority, then movement
+		isHitAnim := e.Anim.Clip == "Hit_A"
+		if e.HitFlash > 0.1 && !isHitAnim {
+			e.Anim = AnimState{Clip: "Hit_A", Loop: false}
+		} else if isHitAnim && !e.Anim.Done {
+			// Let hit play
+		} else {
+			wantClip := "Idle"
+			if e.State == StateIdle {
+				if e.Moving {
+					wantClip = "Walking_A"
+				}
+			} else {
+				wantClip = "Idle_Combat"
+				if e.Moving {
+					wantClip = "Walking_A"
+				}
+			}
+			if e.Anim.Clip != wantClip {
+				e.Anim = AnimState{Clip: wantClip, Loop: true}
+			}
 		}
 
 		if am, ok := skelModels[e.Type]; ok {
 			am.UpdateAnim(&e.Anim, dt)
-			rl.DrawModelEx(*am.Model, ePos, rl.Vector3{Y: 1}, e.FacingAngle, charScaleVec, tint)
+			rl.DrawModelEx(*am.Model, ePos, rl.Vector3{Y: 1}, e.FacingAngle, eScale, tint)
 		}
 
 		// HP bar
@@ -486,12 +501,32 @@ func drawScene(
 		}
 	}
 
-	wantClip := "Idle"
-	if p.Moving {
-		wantClip = "Walking_A"
-	}
-	if p.Anim.Clip != wantClip {
-		p.Anim = AnimState{Clip: wantClip, Loop: true}
+	// Player animation — decoupled from gameplay. Movement/attack cancels old anim.
+	isAttackAnim := p.Anim.Clip == "1H_Melee_Attack_Chop" || p.Anim.Clip == "1H_Melee_Attack_Slice"
+	if p.MeleeTimer > 0 && p.Class != ClassMage && !isAttackAnim {
+		// New swing — start attack anim
+		clip := "1H_Melee_Attack_Chop"
+		if int(rl.GetTime()*10)%2 == 0 {
+			clip = "1H_Melee_Attack_Slice"
+		}
+		p.Anim = AnimState{Clip: clip, Loop: false}
+	} else if p.Moving && isAttackAnim {
+		// Movement cancels attack anim
+		p.Anim = AnimState{Clip: "Walking_A", Loop: true}
+	} else if isAttackAnim && p.Anim.Done {
+		p.Anim = AnimState{Clip: "Idle_Combat", Loop: true}
+	} else if !isAttackAnim {
+		if p.Moving {
+			if p.Anim.Clip != "Walking_A" {
+				p.Anim = AnimState{Clip: "Walking_A", Loop: true}
+			}
+		} else if p.Anim.Clip != "Idle" && p.Anim.Clip != "Idle_Combat" {
+			idle := "Idle"
+			if p.Class == ClassWarrior {
+				idle = "Idle_Combat"
+			}
+			p.Anim = AnimState{Clip: idle, Loop: true}
+		}
 	}
 	heroModel := heroModels[game.Player.Class]
 	heroModel.UpdateAnim(&p.Anim, dt)
@@ -499,7 +534,7 @@ func drawScene(
 
 	// Melee arc visualization
 	if p.MeleeTimer > 0 && p.Class != ClassMage {
-		arcAlpha := uint8(float32(150) * (p.MeleeTimer / 0.2))
+		arcAlpha := uint8(float32(200) * (p.MeleeTimer / 0.3))
 		arcRange := p.Stats.MeleeRange * tileUnit
 		halfArc := p.Stats.MeleeArc / 2.0
 		segments := 8
