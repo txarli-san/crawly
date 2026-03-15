@@ -669,6 +669,20 @@ func (g *GameState) checkCollisions() {
 		dist := float32(math.Sqrt(float64(ddx*ddx + ddz*ddz)))
 		if dist < pickupRadius*tu {
 			drop.Collected = true
+
+			if drop.Item == &healthPickup {
+				// Health potion — instant heal
+				heal := 2
+				if p.HP < p.MaxHP {
+					p.HP += heal
+					if p.HP > p.MaxHP {
+						p.HP = p.MaxHP
+					}
+					g.AddFloat(fmt.Sprintf("+%d HP", heal), drop.X, drop.Z, 80, 255, 80, 18)
+				}
+				continue
+			}
+
 			p.Items = append(p.Items, drop.Item)
 			p.Stats = ComputeStats(p.Items)
 
@@ -679,7 +693,6 @@ func (g *GameState) checkCollisions() {
 				p.HP += diff
 			}
 
-			// Reset shields per room
 			g.SetMessage(drop.Item.Name + ": " + drop.Item.Desc)
 			g.AddFloat(drop.Item.Name, drop.X, drop.Z, 255, 220, 100, 18)
 		}
@@ -709,15 +722,25 @@ func (g *GameState) killEnemy(idx int) {
 	g.Score += 10 * (int(e.Type) + 1)
 	g.AddFloat("SLAIN", e.X, e.Z, 255, 200, 60, 16)
 
+	// Health drop chance (20%) — instant heal, separate from items
+	if g.Rng.Float64() < 0.20 {
+		g.ItemDrops = append(g.ItemDrops, ItemDrop{
+			X: e.X + g.TileUnit*0.2, Z: e.Z, Item: &healthPickup, Timer: 0,
+		})
+	}
+
 	// Item drop chance
 	dropChance := 0.30
 	if g.Rng.Float64() < dropChance {
 		item := RollItemDrop(g.Rng, g.CurrentRoom.Depth)
 		g.ItemDrops = append(g.ItemDrops, ItemDrop{
-			X: e.X, Z: e.Z, Item: item, Timer: 0,
+			X: e.X - g.TileUnit*0.2, Z: e.Z, Item: item, Timer: 0,
 		})
 	}
 }
+
+// Special pseudo-item for health pickups
+var healthPickup = ItemDef{Name: "Health Potion", Desc: "Restore 2 HP", Rarity: 0}
 
 func (g *GameState) spawnExplosion(x, z, damage float32, owner int) {
 	radius := float32(1.5) + float32(g.Player.Stats.ExplosiveStacks)*0.5
@@ -738,9 +761,18 @@ func (g *GameState) checkRoomCleared() {
 			return
 		}
 	}
-	// All enemies dead — open doors
+	// All enemies dead — open doors, heal 1 HP
 	room.Cleared = true
 	g.RoomsCleared++
+	p := &g.Player
+	heal := 1
+	if p.HP < p.MaxHP {
+		p.HP += heal
+		if p.HP > p.MaxHP {
+			p.HP = p.MaxHP
+		}
+		g.AddFloat(fmt.Sprintf("+%d", heal), p.X, p.Z, 80, 255, 80, 16)
+	}
 	g.SetMessage("Room Cleared!")
 
 	// Reset shields for new room

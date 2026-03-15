@@ -525,6 +525,8 @@ func drawScene(
 		col := rl.Color{R: 200, G: 200, B: 200, A: 255}
 		if drop.Item != nil {
 			switch drop.Item.Rarity {
+			case 0: // health potion
+				col = rl.Color{R: 60, G: 255, B: 80, A: 255}
 			case 1:
 				col = rl.Color{R: 180, G: 180, B: 180, A: 255}
 			case 2:
