@@ -624,27 +624,61 @@ func drawScene(
 	heroModel.UpdateAnim(&p.Anim, dt)
 	heroModel.DrawFiltered(p.VisibleMeshes, playerPos, rl.Vector3{Y: 1}, p.FacingAngle, charScaleVec, playerTint)
 
-	// Melee arc visualization
+	// Melee slash trail
 	if p.MeleeTimer > 0 && p.Class != ClassMage {
-		arcAlpha := uint8(float32(200) * (p.MeleeTimer / 0.3))
+		t := p.MeleeTimer / 0.3
 		arcRange := p.Stats.MeleeRange * tileUnit
+		innerRange := arcRange * 0.3
 		halfArc := p.Stats.MeleeArc / 2.0
-		segments := 8
+		segments := 12
 		baseAngle := p.FacingAngle * math.Pi / 180
+		slashY := floorSurfaceY + tileUnit*0.35
+
+		rl.BeginBlendMode(rl.BlendAdditive)
 		for s := 0; s < segments; s++ {
-			a1 := baseAngle + float32(math.Pi/180)*(-halfArc+halfArc*2*float32(s)/float32(segments))
-			a2 := baseAngle + float32(math.Pi/180)*(-halfArc+halfArc*2*float32(s+1)/float32(segments))
-			x1 := p.X + float32(math.Sin(float64(a1)))*arcRange
-			z1 := p.Z + float32(math.Cos(float64(a1)))*arcRange
-			x2 := p.X + float32(math.Sin(float64(a2)))*arcRange
-			z2 := p.Z + float32(math.Cos(float64(a2)))*arcRange
-			arcY := floorSurfaceY + 0.03
-			v1 := rl.Vector3{X: p.X, Y: arcY, Z: p.Z}
-			v2 := rl.Vector3{X: x1, Y: arcY, Z: z1}
-			v3 := rl.Vector3{X: x2, Y: arcY, Z: z2}
-			arcCol := rl.Color{R: 255, G: 200, B: 100, A: arcAlpha}
-			rl.DrawTriangle3D(v1, v3, v2, arcCol)
+			segT := float32(s) / float32(segments)
+			segT2 := float32(s+1) / float32(segments)
+			a1 := baseAngle + float32(math.Pi/180)*(-halfArc+halfArc*2*segT)
+			a2 := baseAngle + float32(math.Pi/180)*(-halfArc+halfArc*2*segT2)
+
+			// Fade from leading edge to trailing edge
+			fade := t * (1.0 - segT*0.5)
+			alpha := uint8(fade * 200)
+
+			// Outer arc
+			ox1 := p.X + float32(math.Sin(float64(a1)))*arcRange
+			oz1 := p.Z + float32(math.Cos(float64(a1)))*arcRange
+			ox2 := p.X + float32(math.Sin(float64(a2)))*arcRange
+			oz2 := p.Z + float32(math.Cos(float64(a2)))*arcRange
+			// Inner arc
+			ix1 := p.X + float32(math.Sin(float64(a1)))*innerRange
+			iz1 := p.Z + float32(math.Cos(float64(a1)))*innerRange
+			ix2 := p.X + float32(math.Sin(float64(a2)))*innerRange
+			iz2 := p.Z + float32(math.Cos(float64(a2)))*innerRange
+
+			// Slash ribbon (quad as 2 triangles, both windings for visibility)
+			glowCol := rl.Color{R: 255, G: 180, B: 80, A: alpha}
+			vo1 := rl.Vector3{X: ox1, Y: slashY, Z: oz1}
+			vo2 := rl.Vector3{X: ox2, Y: slashY, Z: oz2}
+			vi1 := rl.Vector3{X: ix1, Y: slashY, Z: iz1}
+			vi2 := rl.Vector3{X: ix2, Y: slashY, Z: iz2}
+			rl.DrawTriangle3D(vi1, vo2, vo1, glowCol)
+			rl.DrawTriangle3D(vi1, vi2, vo2, glowCol)
+			rl.DrawTriangle3D(vo1, vo2, vi1, glowCol)
+			rl.DrawTriangle3D(vo2, vi2, vi1, glowCol)
+
+			// Bright edge on outer rim
+			edgeAlpha := uint8(fade * 255)
+			edgeCol := rl.Color{R: 255, G: 240, B: 200, A: edgeAlpha}
+			edgeW := arcRange * 0.08
+			ei1 := rl.Vector3{X: p.X + float32(math.Sin(float64(a1)))*(arcRange-edgeW), Y: slashY, Z: p.Z + float32(math.Cos(float64(a1)))*(arcRange-edgeW)}
+			ei2 := rl.Vector3{X: p.X + float32(math.Sin(float64(a2)))*(arcRange-edgeW), Y: slashY, Z: p.Z + float32(math.Cos(float64(a2)))*(arcRange-edgeW)}
+			rl.DrawTriangle3D(ei1, vo2, vo1, edgeCol)
+			rl.DrawTriangle3D(ei1, ei2, vo2, edgeCol)
+			rl.DrawTriangle3D(vo1, vo2, ei1, edgeCol)
+			rl.DrawTriangle3D(vo2, ei2, ei1, edgeCol)
 		}
+		rl.EndBlendMode()
 	}
 
 	// Draw projectiles
@@ -653,11 +687,12 @@ func drawScene(
 		if !proj.Alive {
 			continue
 		}
-		projPos := rl.Vector3{X: proj.X, Y: floorSurfaceY + tileUnit*0.3, Z: proj.Z}
+		projY := floorSurfaceY + tileUnit*0.3
+		projPos := rl.Vector3{X: proj.X, Y: projY, Z: proj.Z}
 		size := proj.Radius * 2
+
+		col := rl.Color{R: 255, G: 255, B: 200, A: 255}
 		if proj.Owner == 0 {
-			// Player projectile color
-			col := rl.Color{R: 255, G: 255, B: 200, A: 255}
 			if proj.Fire {
 				col = rl.Color{R: 255, G: 120, B: 40, A: 255}
 			} else if proj.Ice {
@@ -665,13 +700,46 @@ func drawScene(
 			} else if proj.Poison {
 				col = rl.Color{R: 80, G: 255, B: 80, A: 255}
 			}
-			rl.DrawSphere(projPos, size, col)
-			// Glow
-			rl.DrawSphere(projPos, size*1.5, rl.Color{R: col.R, G: col.G, B: col.B, A: 60})
 		} else {
-			// Enemy projectile
-			rl.DrawSphere(projPos, size, rl.Color{R: 255, G: 60, B: 60, A: 255})
+			col = rl.Color{R: 255, G: 60, B: 60, A: 255}
 		}
+
+		// Trail
+		if proj.TrailFill > 1 {
+			rl.BeginBlendMode(rl.BlendAdditive)
+			for t := 1; t < proj.TrailFill; t++ {
+				idx0 := (proj.TrailHead - t - 1 + TrailLen) % TrailLen
+				idx1 := (proj.TrailHead - t + TrailLen) % TrailLen
+				fade := 1.0 - float32(t)/float32(proj.TrailFill)
+				alpha := uint8(fade * 120)
+				w := size * fade * 0.8
+				p0 := proj.Trail[idx0]
+				p1 := proj.Trail[idx1]
+				// Flat quad as two triangles
+				dx := p1[0] - p0[0]
+				dz := p1[1] - p0[1]
+				length := float32(math.Sqrt(float64(dx*dx + dz*dz)))
+				if length < 0.001 {
+					continue
+				}
+				nx := -dz / length * w
+				nz := dx / length * w
+				tc := rl.Color{R: col.R, G: col.G, B: col.B, A: alpha}
+				v0 := rl.Vector3{X: p0[0] + nx, Y: projY, Z: p0[1] + nz}
+				v1 := rl.Vector3{X: p0[0] - nx, Y: projY, Z: p0[1] - nz}
+				v2 := rl.Vector3{X: p1[0] + nx, Y: projY, Z: p1[1] + nz}
+				v3 := rl.Vector3{X: p1[0] - nx, Y: projY, Z: p1[1] - nz}
+				rl.DrawTriangle3D(v0, v2, v1, tc)
+				rl.DrawTriangle3D(v1, v2, v3, tc)
+			}
+			rl.EndBlendMode()
+		}
+
+		// Projectile sphere + glow
+		rl.DrawSphere(projPos, size, col)
+		rl.BeginBlendMode(rl.BlendAdditive)
+		rl.DrawSphere(projPos, size*1.8, rl.Color{R: col.R, G: col.G, B: col.B, A: 80})
+		rl.EndBlendMode()
 	}
 
 	// Draw item drops

@@ -87,6 +87,8 @@ type Enemy struct {
 	PoisonDmg   float32
 }
 
+const TrailLen = 8
+
 type Projectile struct {
 	X, Z       float32
 	VX, VZ     float32
@@ -109,6 +111,11 @@ type Projectile struct {
 	Chain     bool
 	ChainLeft int
 	Giant     bool
+
+	// Trail
+	Trail     [TrailLen][2]float32
+	TrailHead int
+	TrailFill int
 }
 
 type ItemDrop struct {
@@ -675,6 +682,13 @@ func (g *GameState) updateProjectiles(dt float32) {
 
 		proj.X += proj.VX * dt
 		proj.Z += proj.VZ * dt
+
+		// Record trail
+		proj.Trail[proj.TrailHead] = [2]float32{proj.X, proj.Z}
+		proj.TrailHead = (proj.TrailHead + 1) % TrailLen
+		if proj.TrailFill < TrailLen {
+			proj.TrailFill++
+		}
 
 		// Wall collision
 		tx := int(math.Floor(float64(proj.X / tu)))
