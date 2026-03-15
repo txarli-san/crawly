@@ -680,11 +680,19 @@ func drawScene(
 	rl.DrawText(fmt.Sprintf("Floor %d  |  Score: %d", game.RoomsCleared+1, game.Score),
 		10, 10, 20, rl.White)
 
-	// Dodge cooldown
-	if p.DodgeCooldown > 0 {
-		rl.DrawText(fmt.Sprintf("Dodge: %.1f", p.DodgeCooldown), barX, barY+24, 14, rl.Gray)
+	// Dodge / Block indicator
+	if p.Class == ClassWarrior {
+		if p.BlockTimer > 0 {
+			rl.DrawText("Blocking", barX, barY+24, 14, rl.Color{R: 100, G: 180, B: 255, A: 255})
+		} else {
+			rl.DrawText("Block [Space/RMB]", barX, barY+24, 14, rl.Color{R: 100, G: 255, B: 100, A: 255})
+		}
 	} else {
-		rl.DrawText("Dodge: Ready [Space/RMB]", barX, barY+24, 14, rl.Color{R: 100, G: 255, B: 100, A: 255})
+		if p.DodgeCooldown > 0 {
+			rl.DrawText(fmt.Sprintf("Dodge: %.1f", p.DodgeCooldown), barX, barY+24, 14, rl.Gray)
+		} else {
+			rl.DrawText("Dodge [Space/RMB]", barX, barY+24, 14, rl.Color{R: 100, G: 255, B: 100, A: 255})
+		}
 	}
 
 	// Class name

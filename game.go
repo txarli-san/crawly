@@ -41,6 +41,8 @@ type Player struct {
 	DodgeTimer    float32
 	DodgeCooldown float32
 	InvulnTimer   float32
+	BlockTimer    float32 // >0 = holding block
+	ParryWindow   float32 // >0 = perfect parry possible
 	DodgeVX       float32
 	DodgeVZ       float32
 	Moving        bool
@@ -344,9 +346,15 @@ func (g *GameState) updatePlayer(dt float32) {
 		p.Moving = false
 	}
 
-	// Fire timer
+	// Timers
 	if p.FireTimer > 0 {
 		p.FireTimer -= dt
+	}
+	if p.BlockTimer > 0 {
+		p.BlockTimer -= dt
+	}
+	if p.ParryWindow > 0 {
+		p.ParryWindow -= dt
 	}
 }
 
@@ -843,16 +851,31 @@ func (g *GameState) damagePlayer(dmg int) {
 		return
 	}
 
-	// Warrior: block during melee swing (shield up while attacking)
-	if p.Class == ClassWarrior && p.MeleeTimer > 0 {
-		g.AddFloat("PARRY", p.X, p.Z, 255, 220, 80, 18)
-		p.InvulnTimer = 0.2
-		return
-	}
-
-	// Warrior: passive armor reduces all damage by 1 (min 1)
-	if p.Class == ClassWarrior && dmg > 1 {
-		dmg--
+	// Warrior block/parry
+	if p.Class == ClassWarrior {
+		if p.ParryWindow > 0 {
+			// Perfect parry — negate damage, stagger nearby enemies
+			g.AddFloat("PARRY!", p.X, p.Z, 255, 255, 100, 22)
+			p.InvulnTimer = 0.3
+			p.ParryWindow = 0
+			p.BlockTimer = 0
+			g.staggerNearby(p.X, p.Z, 2.0)
+			return
+		}
+		if p.BlockTimer > 0 {
+			// Regular block — halve damage (min 1)
+			dmg = (dmg + 1) / 2
+			g.AddFloat("BLOCK", p.X, p.Z, 180, 200, 255, 16)
+			p.InvulnTimer = 0.15
+			p.HP -= dmg
+			p.TimeSinceHit = 0
+			g.AddFloat(fmt.Sprintf("-%d", dmg), p.X, p.Z-g.TileUnit*0.3, 255, 160, 60, 14)
+			return
+		}
+		// Passive armor
+		if dmg > 1 {
+			dmg--
+		}
 	}
 
 	p.HP -= dmg
@@ -1091,6 +1114,27 @@ func (g *GameState) alertAllInRadius(wx, wz, radius float32) {
 		dist := float32(math.Sqrt(float64(dx*dx + dz*dz)))
 		if dist < radius {
 			e.State = StateChasing
+		}
+	}
+}
+
+// staggerNearby stuns enemies within radius (from a perfect parry).
+func (g *GameState) staggerNearby(wx, wz, radiusTiles float32) {
+	tu := g.TileUnit
+	r := radiusTiles * tu
+	for i := range g.Enemies {
+		e := &g.Enemies[i]
+		if !e.Alive {
+			continue
+		}
+		dx := e.X - wx
+		dz := e.Z - wz
+		dist := float32(math.Sqrt(float64(dx*dx + dz*dz)))
+		if dist < r {
+			e.AttackTimer = 1.5 // can't attack for 1.5s
+			e.HitFlash = 0.3
+			e.Speed *= 0.3 // briefly slowed (permanent reduction — gets reset on room transition)
+			g.AddFloat("STAGGER", e.X, e.Z, 255, 255, 150, 14)
 		}
 	}
 }

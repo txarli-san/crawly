@@ -219,39 +219,48 @@ func main() {
 				}
 			}
 
-			// Dodge
+			// Dodge / Block
 			if game.Phase == PhasePlaying {
 				p := &game.Player
-				if (rl.IsKeyPressed(rl.KeySpace) || rl.IsMouseButtonPressed(rl.MouseButtonRight)) && p.DodgeCooldown <= 0 && p.DodgeTimer <= 0 {
-					// Dodge in movement direction, or facing direction
-					var ddx, ddz float32
-					if isKeyDown(keyW) {
-						ddz -= 1
+				switch p.Class {
+				case ClassMage:
+					// Mage: dodge roll
+					if (rl.IsKeyPressed(rl.KeySpace) || rl.IsMouseButtonPressed(rl.MouseButtonRight)) && p.DodgeCooldown <= 0 && p.DodgeTimer <= 0 {
+						var ddx, ddz float32
+						if isKeyDown(keyW) {
+							ddz -= 1
+						}
+						if isKeyDown(keyS) {
+							ddz += 1
+						}
+						if isKeyDown(keyA) {
+							ddx -= 1
+						}
+						if isKeyDown(keyD) {
+							ddx += 1
+						}
+						if ddx == 0 && ddz == 0 {
+							angle := p.FacingAngle * math.Pi / 180
+							ddx = float32(math.Sin(float64(angle)))
+							ddz = float32(math.Cos(float64(angle)))
+						}
+						length := float32(math.Sqrt(float64(ddx*ddx + ddz*ddz)))
+						if length > 0 {
+							ddx /= length
+							ddz /= length
+						}
+						p.DodgeVX = ddx * dodgeSpeed * tileUnit
+						p.DodgeVZ = ddz * dodgeSpeed * tileUnit
+						p.DodgeTimer = dodgeDuration
+						p.InvulnTimer = dodgeDuration + 0.1
+						p.DodgeCooldown = dodgeCooldownTime
 					}
-					if isKeyDown(keyS) {
-						ddz += 1
+				case ClassWarrior:
+					// Warrior: hold RMB/Space to block, tap to parry
+					if rl.IsKeyPressed(rl.KeySpace) || rl.IsMouseButtonPressed(rl.MouseButtonRight) {
+						p.BlockTimer = 0.5
+						p.ParryWindow = 0.15 // perfect parry in first 150ms
 					}
-					if isKeyDown(keyA) {
-						ddx -= 1
-					}
-					if isKeyDown(keyD) {
-						ddx += 1
-					}
-					if ddx == 0 && ddz == 0 {
-						angle := p.FacingAngle * math.Pi / 180
-						ddx = float32(math.Sin(float64(angle)))
-						ddz = float32(math.Cos(float64(angle)))
-					}
-					length := float32(math.Sqrt(float64(ddx*ddx + ddz*ddz)))
-					if length > 0 {
-						ddx /= length
-						ddz /= length
-					}
-					p.DodgeVX = ddx * dodgeSpeed * tileUnit
-					p.DodgeVZ = ddz * dodgeSpeed * tileUnit
-					p.DodgeTimer = dodgeDuration
-					p.InvulnTimer = dodgeDuration + 0.1
-					p.DodgeCooldown = dodgeCooldownTime
 				}
 			}
 
