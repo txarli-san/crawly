@@ -342,50 +342,76 @@ func (g *GameState) updateEnemies(dt float32) {
 			speedMult = 0.35
 		}
 
-		// AI: move toward player
+		// AI
 		ddx := p.X - e.X
 		ddz := p.Z - e.Z
 		dist := float32(math.Sqrt(float64(ddx*ddx + ddz*ddz)))
+		e.AttackTimer -= dt
 
 		if dist > 0.1*tu {
 			ndx := ddx / dist
 			ndz := ddz / dist
 			e.FacingAngle = float32(math.Atan2(float64(ndx), float64(ndz))) * 180 / math.Pi
 
-			moveRange := e.AttackRange * tu * 0.8
-			if e.Type == EnemyMage {
-				moveRange = 4.0 * tu // mages keep distance
-			}
-
-			if dist > moveRange {
+			switch e.Type {
+			case EnemyMinion, EnemyWarrior:
+				// Melee: always chase into the player
 				e.X += ndx * e.Speed * tu * speedMult * dt
 				e.Z += ndz * e.Speed * tu * speedMult * dt
 				e.X, e.Z = g.resolveWallCollision(e.X, e.Z, colliderRadius*tu)
 				e.Moving = true
-			} else {
-				e.Moving = false
-			}
-		}
 
-		// Attack
-		e.AttackTimer -= dt
-		if e.AttackTimer <= 0 && dist < e.AttackRange*tu*1.2 {
-			e.AttackTimer = e.AttackRate
-			if e.Type == EnemyMage {
-				// Ranged: fire projectile
-				if dist > 0.1 {
-					ndx := ddx / dist
-					ndz := ddz / dist
+				// Melee attack on contact
+				contactDist := colliderRadius * tu * 2.2
+				if dist < contactDist && e.AttackTimer <= 0 {
+					e.AttackTimer = e.AttackRate
+					g.damagePlayer(e.Damage)
+					// Knockback: push player away
+					p.X += ndx * tu * 0.4
+					p.Z += ndz * tu * 0.4
+					p.X, p.Z = g.resolveWallCollision(p.X, p.Z, colliderRadius*tu)
+				}
+
+			case EnemyMage:
+				// Ranged: keep distance, strafe, shoot
+				preferDist := float32(4.0) * tu
+				if dist < preferDist*0.7 {
+					// Too close — flee
+					e.X -= ndx * e.Speed * tu * speedMult * dt
+					e.Z -= ndz * e.Speed * tu * speedMult * dt
+					e.Moving = true
+				} else if dist > preferDist*1.3 {
+					// Too far — approach
+					e.X += ndx * e.Speed * tu * speedMult * dt
+					e.Z += ndz * e.Speed * tu * speedMult * dt
+					e.Moving = true
+				} else {
+					// Good range — strafe perpendicular
+					perpX := -ndz
+					perpZ := ndx
+					// Alternate strafe direction based on index
+					if i%2 == 0 {
+						perpX = ndz
+						perpZ = -ndx
+					}
+					e.X += perpX * e.Speed * tu * speedMult * 0.6 * dt
+					e.Z += perpZ * e.Speed * tu * speedMult * 0.6 * dt
+					e.Moving = true
+				}
+				e.X, e.Z = g.resolveWallCollision(e.X, e.Z, colliderRadius*tu)
+
+				// Shoot projectile
+				if e.AttackTimer <= 0 && dist < e.AttackRange*tu {
+					e.AttackTimer = e.AttackRate
 					speed := float32(8.0) * tu
 					g.Projectiles = append(g.Projectiles, Projectile{
 						X: e.X, Z: e.Z,
 						VX: ndx * speed, VZ: ndz * speed,
-						Damage: float32(e.Damage), Radius: 0.08 * tu,
+						Damage: float32(e.Damage), Radius: 0.1 * tu,
 						Alive: true, Owner: 1,
 					})
 				}
 			}
-			// Melee damage handled in collision check
 		}
 
 		// Enemy-enemy separation
@@ -629,21 +655,6 @@ func (g *GameState) checkCollisions() {
 		if dist < (proj.Radius + colliderRadius*tu) {
 			g.damagePlayer(int(proj.Damage))
 			proj.Alive = false
-		}
-	}
-
-	// Enemy contact damage vs player
-	for i := range g.Enemies {
-		e := &g.Enemies[i]
-		if !e.Alive || e.Type == EnemyMage {
-			continue // mages don't do contact damage
-		}
-		ddx := p.X - e.X
-		ddz := p.Z - e.Z
-		dist := float32(math.Sqrt(float64(ddx*ddx + ddz*ddz)))
-		if dist < colliderRadius*tu*2 && e.AttackTimer <= 0 {
-			e.AttackTimer = e.AttackRate
-			g.damagePlayer(e.Damage)
 		}
 	}
 
