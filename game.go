@@ -33,9 +33,7 @@ type Player struct {
 	Moving        bool
 	Anim          AnimState
 	VisibleMeshes []bool
-	Tags          TagSet
-	KillStreak    int     // kills this room, for berserk tracking
-	TimeSinceHit  float32 // for stealthy tracking
+	TimeSinceHit  float32 // seconds since last damage taken
 }
 
 type EnemyState int
@@ -58,7 +56,6 @@ type Enemy struct {
 	Alive        bool
 	Moving       bool
 	Anim         AnimState
-	Tags         TagSet
 	State        EnemyState
 	DetectRadius float32 // how far this enemy can see (in tiles)
 	IdleAngle    float32 // patrol wander direction
@@ -177,7 +174,7 @@ func NewGame(seed int64, tileUnit, floorSurfaceY float32) *GameState {
 	// Generate start room
 	startCoord := RoomCoord{0, 0}
 	var noDoors [DoorCount]bool
-	startRoom := GenerateRoom(rng, startCoord, 0, noDoors, nil)
+	startRoom := GenerateRoom(rng, startCoord, 0, noDoors)
 	g.RoomMap[startCoord] = startRoom
 	g.CurrentRoom = startRoom
 	g.RoomCoord = startCoord
@@ -189,9 +186,7 @@ func NewGame(seed int64, tileUnit, floorSurfaceY float32) *GameState {
 		HP:    BaseHP,
 		MaxHP: BaseHP,
 		Stats: ComputeStats(nil),
-		Tags:  NewTagSet(),
 	}
-	g.Player.Tags.Apply(TagStealthy) // start stealthy until first hit
 	g.Player.VisibleMeshes = playerVisibleMeshes()
 
 	return g
@@ -259,35 +254,14 @@ func (g *GameState) updatePlaying(dt float32) {
 	g.tickFloats(dt)
 	g.tickDrops(dt)
 
-	// Tick player tags
-	p := &g.Player
-	p.Tags.Tick(dt)
-	p.TimeSinceHit += dt
-
-	// Bleeding DoT
-	if p.Tags.Has(TagBleeding) {
-		p.HP -= int(math.Ceil(float64(dt * 0.5))) // ~0.5 HP/sec
-		if p.HP < 1 && p.Tags.Has(TagBleeding) {
-			p.HP = 1 // bleeding can't kill, just leaves you at 1
-		}
-	}
-
-	// Stealthy: maintained while not hit for 5+ seconds
-	if p.TimeSinceHit > 5.0 && !p.Tags.Has(TagStealthy) {
-		p.Tags.Apply(TagStealthy)
-	}
-
-	// Overcharged: too many items
-	if len(p.Items) >= 15 && !p.Tags.Has(TagOvercharged) {
-		p.Tags.Apply(TagOvercharged)
-	}
+	g.Player.TimeSinceHit += dt
 
 	if g.MessageTimer > 0 {
 		g.MessageTimer -= dt
 	}
 
 	// Check death
-	if p.HP <= 0 {
+	if g.Player.HP <= 0 {
 		g.Phase = PhaseDead
 		g.DeathTimer = 1.5
 	}
@@ -365,9 +339,6 @@ func (g *GameState) updateEnemies(dt float32) {
 			continue
 		}
 
-		// Evaluate systemic tags
-		EvaluateEnemyTags(e, &p.Tags, aliveCount, deadCount)
-		e.Tags.Tick(dt)
 
 		// Status effect ticks
 		if e.FireTimer > 0 {
@@ -390,26 +361,15 @@ func (g *GameState) updateEnemies(dt float32) {
 			e.IceTimer -= dt
 		}
 
-		// Speed/damage modifiers from tags
+		// Speed/damage modifiers from state
 		speedMult := float32(1.0)
 		damageMult := float32(1.0)
 		if e.IceTimer > 0 {
 			speedMult = 0.35
 		}
-		if e.Tags.Has(TagAggressive) {
-			speedMult *= 1.3
-			damageMult *= 1.3
-		}
-		if e.Tags.Has(TagFrenzied) {
+		cornered := e.HP > 0 && e.HP <= e.MaxHP/4
+		if cornered {
 			speedMult *= 1.5
-			damageMult *= 1.5
-		}
-		if e.Tags.Has(TagCornered) {
-			speedMult *= 1.6 // desperate speed
-			damageMult *= 0.7 // but less accurate
-		}
-		if e.Tags.Has(TagBloodhound) {
-			speedMult *= 1.2
 		}
 
 		// AI
@@ -421,15 +381,13 @@ func (g *GameState) updateEnemies(dt float32) {
 		// Detection: idle enemies must detect player first
 		if e.State == StateIdle {
 			detectDist := e.DetectRadius * tu
-			if p.Tags.Has(TagStealthy) {
-				detectDist *= 0.5 // stealthy = harder to detect
-			}
-			if p.Tags.Has(TagLoud) {
-				detectDist *= 2.0 // loud = easy to detect
+			// Player is stealthy when not shooting and not recently hit
+			stealthy := p.TimeSinceHit > 5.0 && p.FireTimer <= 0
+			if stealthy {
+				detectDist *= 0.5
 			}
 			if dist < detectDist {
 				e.State = StateChasing
-				e.Tags.Apply(TagAlert)
 				// Alert nearby allies
 				g.alertNearby(i, 4.0*tu)
 			} else {
@@ -474,7 +432,7 @@ func (g *GameState) updateEnemies(dt float32) {
 				contactDist := colliderRadius * tu * 2.2
 				if dist < contactDist && e.AttackTimer <= 0 {
 					rate := e.AttackRate
-					if e.Tags.Has(TagCornered) {
+					if cornered {
 						rate *= 0.5 // desperate flailing
 					}
 					e.AttackTimer = rate
@@ -488,11 +446,11 @@ func (g *GameState) updateEnemies(dt float32) {
 			case EnemyMage:
 				preferDist := float32(4.0) * tu
 				// Cornered mages stop retreating — spray and pray
-				if e.Tags.Has(TagCornered) {
+				if cornered {
 					preferDist = 2.0 * tu
 				}
 
-				if dist < preferDist*0.7 && !e.Tags.Has(TagCornered) {
+				if dist < preferDist*0.7 && !cornered {
 					e.X -= ndx * e.Speed * tu * speedMult * dt
 					e.Z -= ndz * e.Speed * tu * speedMult * dt
 					e.Moving = true
@@ -508,7 +466,7 @@ func (g *GameState) updateEnemies(dt float32) {
 						perpZ = -ndx
 					}
 					strafeSpeed := float32(0.6)
-					if e.Tags.Has(TagCornered) || e.Tags.Has(TagFrenzied) {
+					if cornered || false {
 						strafeSpeed = 1.0 // erratic movement
 					}
 					e.X += perpX * e.Speed * tu * speedMult * strafeSpeed * dt
@@ -520,10 +478,10 @@ func (g *GameState) updateEnemies(dt float32) {
 				// Shoot projectile
 				if e.AttackTimer <= 0 && dist < e.AttackRange*tu {
 					rate := e.AttackRate
-					if e.Tags.Has(TagCornered) {
+					if cornered {
 						rate *= 0.4 // rapid fire when cornered
 					}
-					if e.Tags.Has(TagFrenzied) {
+					if false {
 						rate *= 0.6
 					}
 					e.AttackTimer = rate
@@ -532,7 +490,7 @@ func (g *GameState) updateEnemies(dt float32) {
 
 					// Cornered mages spray multiple projectiles
 					shots := 1
-					if e.Tags.Has(TagCornered) {
+					if cornered {
 						shots = 3
 					}
 					for s := 0; s < shots; s++ {
@@ -574,13 +532,12 @@ func (g *GameState) updateEnemies(dt float32) {
 // Noise from shooting alerts nearby idle enemies.
 func (g *GameState) makeNoise(wx, wz float32) {
 	noiseRadius := float32(6.0) * g.TileUnit
-	if g.Player.Tags.Has(TagStealthy) {
+	// Stealthy player makes less noise
+	stealthy := g.Player.TimeSinceHit > 5.0 && g.Player.FireTimer <= 0
+	if stealthy {
 		noiseRadius *= 0.5
 	}
 	g.alertAllInRadius(wx, wz, noiseRadius)
-	if !g.Player.Tags.Has(TagStealthy) {
-		g.Player.Tags.Apply(TagLoud)
-	}
 }
 
 func (g *GameState) updateProjectiles(dt float32) {
@@ -865,11 +822,6 @@ func (g *GameState) damagePlayer(dmg int) {
 	p.HP -= dmg
 	p.InvulnTimer = 0.8
 	p.TimeSinceHit = 0
-	p.Tags.Remove(TagStealthy)
-	p.Tags.Apply(TagWounded)
-	if dmg >= 2 {
-		p.Tags.Apply(TagBleeding)
-	}
 	g.AddFloat(fmt.Sprintf("-%d", dmg), p.X, p.Z, 255, 60, 60, 20)
 }
 
@@ -878,11 +830,6 @@ func (g *GameState) killEnemy(idx int) {
 	e.Alive = false
 	g.Score += 10 * (int(e.Type) + 1)
 	g.AddFloat("SLAIN", e.X, e.Z, 255, 200, 60, 16)
-
-	// Tag propagation: kill consequences
-	g.Player.KillStreak++
-	PropagateKillTags(g.Rng, &g.Player.Tags, &g.CurrentRoom.Tags, g.Player.KillStreak,
-		g.Player.Stats.FireStacks > 0, g.Player.Stats.IceStacks > 0, g.Player.Stats.PoisonStacks > 0)
 
 	// Health drop chance (20%) — instant heal, separate from items
 	if g.Rng.Float64() < 0.20 {
@@ -1006,21 +953,19 @@ func (g *GameState) finishTransition() {
 		var required [DoorCount]bool
 		required[dir.Opposite()] = true
 		depth := g.RoomsCleared
-		room = GenerateRoom(g.Rng, newCoord, depth, required, &g.Player.Tags)
+		room = GenerateRoom(g.Rng, newCoord, depth, required)
 		g.RoomMap[newCoord] = room
 	}
 
 	g.CurrentRoom = room
 	g.RoomCoord = newCoord
 
-	// Spawn enemies with tags
+	// Spawn enemies
 	g.Enemies = g.Enemies[:0]
-	g.Player.KillStreak = 0
 	for _, spawn := range room.Spawns {
 		enemy := makeEnemy(spawn, g.TileUnit, room.Depth)
 		if spawn.Alert {
-			enemy.Tags.Apply(TagAlert)
-			enemy.Tags.Apply(TagAggressive)
+			enemy.State = StateChasing // pre-alerted
 		}
 		g.Enemies = append(g.Enemies, enemy)
 	}
@@ -1047,7 +992,6 @@ func makeEnemy(spawn EnemySpawn, tileUnit float32, depth int) Enemy {
 		Z:     spawn.Z * tileUnit,
 		Type:  spawn.Type,
 		Alive: true,
-		Tags:  NewTagSet(),
 	}
 
 	// Scale stats with depth
@@ -1095,7 +1039,7 @@ func (g *GameState) alertNearby(idx int, radius float32) {
 		dist := float32(math.Sqrt(float64(dx*dx + dz*dz)))
 		if dist < radius {
 			g.Enemies[j].State = StateChasing
-			g.Enemies[j].Tags.Apply(TagAlert)
+			g.Enemies[j].State = StateChasing
 		}
 	}
 }
@@ -1112,7 +1056,7 @@ func (g *GameState) alertAllInRadius(wx, wz, radius float32) {
 		dist := float32(math.Sqrt(float64(dx*dx + dz*dz)))
 		if dist < radius {
 			e.State = StateChasing
-			e.Tags.Apply(TagAlert)
+			e.State = StateChasing
 		}
 	}
 }

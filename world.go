@@ -97,7 +97,6 @@ type RoomDef struct {
 	Doors   [DoorCount]bool
 	Spawns  []EnemySpawn
 	Props   map[[2]int]Prop
-	Tags    TagSet
 	Depth   int
 	Cleared bool
 }
@@ -130,8 +129,8 @@ func doorTiles(dir DoorDir) [][2]int {
 
 // GenerateRoom creates a procedural room. `requiredDoors` indicates which doors
 // must exist (because adjacent rooms already have connecting doors).
-func GenerateRoom(rng *rand.Rand, coord RoomCoord, depth int, requiredDoors [DoorCount]bool, playerTags *TagSet) *RoomDef {
-	room := &RoomDef{Depth: depth, Tags: NewTagSet()}
+func GenerateRoom(rng *rand.Rand, coord RoomCoord, depth int, requiredDoors [DoorCount]bool) *RoomDef {
+	room := &RoomDef{Depth: depth}
 
 	// Fill with walls
 	for z := 0; z < RoomH; z++ {
@@ -186,7 +185,7 @@ func GenerateRoom(rng *rand.Rand, coord RoomCoord, depth int, requiredDoors [Doo
 	room.Props = make(map[[2]int]Prop)
 	if !isStartRoom {
 		placeObstacles(rng, room, depth)
-		placeEnemies(rng, room, depth, playerTags)
+		placeEnemies(rng, room, depth)
 	}
 	placeProps(rng, room)
 
@@ -252,119 +251,46 @@ func placeObstacles(rng *rand.Rand, room *RoomDef, depth int) {
 	}
 }
 
-func placeEnemies(rng *rand.Rand, room *RoomDef, depth int, playerTags *TagSet) {
-	// Enemy count scales with depth (tuned for smaller rooms)
+func placeEnemies(rng *rand.Rand, room *RoomDef, depth int) {
 	baseCount := 2 + depth/3
 	if baseCount > 5 {
 		baseCount = 5
 	}
 	count := baseCount + rng.Intn(2)
 
-	// Tag-biased count adjustments
-	if playerTags != nil {
-		if playerTags.Has(TagWounded) {
-			// Dungeon senses weakness — fewer but tougher enemies
-			count--
-		}
-		if playerTags.Has(TagBerserk) {
-			// Dungeon responds to aggression — more enemies
-			count++
-		}
-		if playerTags.Has(TagStealthy) {
-			// Fewer enemies, possible ambush advantage
-			count--
-		}
-	}
-	if count < 1 {
-		count = 1
-	}
-
-	// Tag-biased enemy type: player tags shift distribution
-	alertSpawn := playerTags != nil && playerTags.Has(TagLoud)
-	moreElites := playerTags != nil && (playerTags.Has(TagBleeding) || playerTags.Has(TagCursed))
-
 	for i := 0; i < count; i++ {
 		var etype EnemyType
 		roll := rng.Float64()
-
-		if moreElites {
-			// More dangerous composition when player is vulnerable
-			switch {
-			case depth < 3:
-				if roll < 0.5 {
-					etype = EnemyMinion
-				} else {
-					etype = EnemyWarrior
-				}
-			default:
-				if roll < 0.25 {
-					etype = EnemyMinion
-				} else if roll < 0.55 {
-					etype = EnemyWarrior
-				} else {
-					etype = EnemyMage
-				}
-			}
-		} else {
-			switch {
-			case depth < 3:
+		switch {
+		case depth < 3:
+			etype = EnemyMinion
+		case depth < 6:
+			if roll < 0.6 {
 				etype = EnemyMinion
-			case depth < 6:
-				if roll < 0.6 {
-					etype = EnemyMinion
-				} else {
-					etype = EnemyWarrior
-				}
-			default:
-				if roll < 0.4 {
-					etype = EnemyMinion
-				} else if roll < 0.75 {
-					etype = EnemyWarrior
-				} else {
-					etype = EnemyMage
-				}
+			} else {
+				etype = EnemyWarrior
+			}
+		default:
+			if roll < 0.4 {
+				etype = EnemyMinion
+			} else if roll < 0.75 {
+				etype = EnemyWarrior
+			} else {
+				etype = EnemyMage
 			}
 		}
 
-		// Find a valid spawn position
 		for attempt := 0; attempt < 30; attempt++ {
 			x := 3 + rng.Intn(RoomW-6)
 			z := 3 + rng.Intn(RoomH-6)
 			if room.Tiles[z][x] != TileFloor {
 				continue
 			}
-			spawn := EnemySpawn{
+			room.Spawns = append(room.Spawns, EnemySpawn{
 				X:    float32(x) + 0.5,
 				Z:    float32(z) + 0.5,
 				Type: etype,
-			}
-			// If player is loud, spawn near doors (alert ambush)
-			if alertSpawn && rng.Float64() < 0.5 {
-				// Bias toward door positions
-				for d := DoorDir(0); d < DoorCount; d++ {
-					if !room.Doors[d] {
-						continue
-					}
-					tiles := doorTiles(d)
-					mid := tiles[1]
-					spawn.X = float32(mid[0]) + 0.5
-					spawn.Z = float32(mid[1]) + 0.5
-					// Offset inward
-					switch d {
-					case DoorNorth:
-						spawn.Z += 2
-					case DoorSouth:
-						spawn.Z -= 2
-					case DoorWest:
-						spawn.X += 2
-					case DoorEast:
-						spawn.X -= 2
-					}
-					spawn.Alert = true
-					break
-				}
-			}
-			room.Spawns = append(room.Spawns, spawn)
+			})
 			break
 		}
 	}

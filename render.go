@@ -426,22 +426,17 @@ func drawScene(
 		}
 		ePos := rl.Vector3{X: e.X, Y: charYOffset, Z: e.Z}
 
-		// Tint from status effects + systemic tags
+		// Tint: status effects take priority (immediate feedback),
+		// then systemic tags as subtle shift (not distracting)
 		tint := rl.White
-		if e.Tags.Has(TagFrenzied) {
-			tint = rl.Color{R: 255, G: 40, B: 100, A: 255}
-		} else if e.Tags.Has(TagCornered) {
-			tint = rl.Color{R: 255, G: 100, B: 40, A: 255}
-		} else if e.Tags.Has(TagBloodhound) {
-			tint = rl.Color{R: 200, G: 30, B: 30, A: 255}
-		} else if e.Tags.Has(TagAggressive) {
-			tint = rl.Color{R: 255, G: 80, B: 80, A: 255}
-		} else if e.FireTimer > 0 {
+		if e.FireTimer > 0 {
 			tint = rl.Color{R: 255, G: 150, B: 80, A: 255}
 		} else if e.IceTimer > 0 {
 			tint = rl.Color{R: 150, G: 200, B: 255, A: 255}
 		} else if e.PoisonTimer > 0 {
 			tint = rl.Color{R: 100, G: 255, B: 100, A: 255}
+		} else if e.State == StateIdle {
+			tint = rl.Color{R: 180, G: 180, B: 200, A: 255} // unaware = muted
 		}
 
 		wantClip := "Idle"
@@ -634,25 +629,10 @@ func drawScene(
 		rl.DrawText("Dodge: Ready [Space/RMB]", barX, barY+24, 14, rl.Color{R: 100, G: 255, B: 100, A: 255})
 	}
 
-	// Active player tags — bottom left, above HP
-	tagY := barY - 20
-	for _, tid := range p.Tags.List() {
-		meta := tagMeta[tid]
-		col := rl.Color{R: meta.Tint[0], G: meta.Tint[1], B: meta.Tint[2], A: 255}
-		rl.DrawText("["+meta.Name+"]", barX, tagY, 12, col)
-		tagY -= 14
-	}
-
-	// Room tags — top left under score
-	if game.CurrentRoom != nil {
-		roomTagX := int32(10)
-		roomTagY := int32(35)
-		for _, tid := range game.CurrentRoom.Tags.List() {
-			meta := tagMeta[tid]
-			col := rl.Color{R: meta.Tint[0], G: meta.Tint[1], B: meta.Tint[2], A: 180}
-			rl.DrawText(meta.Name, roomTagX, roomTagY, 12, col)
-			roomTagX += rl.MeasureText(meta.Name, 12) + 10
-		}
+	// Stealth indicator
+	stealthy := p.TimeSinceHit > 5.0 && p.FireTimer <= 0
+	if stealthy {
+		rl.DrawText("Stealth", barX, barY-18, 14, rl.Color{R: 100, G: 200, B: 180, A: 255})
 	}
 
 	// Item pickup message
