@@ -117,6 +117,9 @@ func main() {
 	propModels := LoadPropModels(shader, wallScale)
 	defer propModels.Unload()
 
+	lootModels := LoadLootModels(shader)
+	defer lootModels.Unload()
+
 	charBBox := rl.GetModelBoundingBox(*mageAnim.Model)
 	charScale := (tileUnit * 1.4) / (charBBox.Max.X - charBBox.Min.X)
 	charYOffset := floorSurfaceY - charBBox.Min.Y*charScale
@@ -279,7 +282,7 @@ func main() {
 				camera, game, dt,
 				tileUnit, floorSurfaceY, charYOffset, charScale, wallScale,
 				floorModel, floorCrackedA, floorCrackedB, wallModel,
-				heroModels, skelModels, propModels,
+				heroModels, skelModels, propModels, lootModels,
 			)
 
 			// Transition overlay
@@ -295,7 +298,7 @@ func main() {
 					camera, game, 0,
 					tileUnit, floorSurfaceY, charYOffset, charScale, wallScale,
 					floorModel, floorCrackedA, floorCrackedB, wallModel,
-					heroModels, skelModels, propModels,
+					heroModels, skelModels, propModels, lootModels,
 				)
 				drawDeath(game)
 

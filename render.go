@@ -71,6 +71,35 @@ void main() {
 }
 `
 
+// LootModels holds models for item drops, one per rarity.
+type LootModels struct {
+	HealthPotion rl.Model // rarity 0
+	Coin         rl.Model // rarity 1 (common)
+	LootSack     rl.Model // rarity 2 (uncommon)
+	Artifact     rl.Model // rarity 3 (rare)
+}
+
+func LoadLootModels(shader rl.Shader) *LootModels {
+	lm := &LootModels{}
+	load := func(path string) rl.Model {
+		m := rl.LoadModel("assets/models/loot/" + path)
+		applyShaderToModel(m, shader)
+		return m
+	}
+	lm.HealthPotion = load("potionSmall_red.gltf.glb")
+	lm.Coin = load("coin.gltf.glb")
+	lm.LootSack = load("lootSackB.gltf.glb")
+	lm.Artifact = load("artifact.gltf.glb")
+	return lm
+}
+
+func (lm *LootModels) Unload() {
+	rl.UnloadModel(lm.HealthPotion)
+	rl.UnloadModel(lm.Coin)
+	rl.UnloadModel(lm.LootSack)
+	rl.UnloadModel(lm.Artifact)
+}
+
 // PropModels holds all loaded prop models and per-model scales.
 type PropModels struct {
 	Models []rl.Model
@@ -326,6 +355,7 @@ func drawScene(
 	heroModels map[PlayerClass]*AnimatedModel,
 	skelModels map[EnemyType]*AnimatedModel,
 	propModels *PropModels,
+	lootModels *LootModels,
 ) {
 	rl.BeginMode3D(camera)
 
@@ -634,29 +664,62 @@ func drawScene(
 			continue
 		}
 		bob := float32(math.Sin(float64(drop.Timer)*3.0)) * tileUnit * 0.08
-		dropPos := rl.Vector3{X: drop.X, Y: floorSurfaceY + tileUnit*0.25 + bob, Z: drop.Z}
+		dropPos := rl.Vector3{X: drop.X, Y: floorSurfaceY + bob, Z: drop.Z}
 
-		// Color by rarity
-		col := rl.Color{R: 200, G: 200, B: 200, A: 255}
+		// Pick model, tint, and particle color by rarity
+		var model rl.Model
+		tint := rl.White
+		particleCol := rl.Color{R: 180, G: 180, B: 180, A: 255}
+		lootScale := tileUnit * 0.6
 		if drop.Item != nil {
 			switch drop.Item.Rarity {
 			case 0: // health potion
-				col = rl.Color{R: 60, G: 255, B: 80, A: 255}
-			case 1:
-				col = rl.Color{R: 180, G: 180, B: 180, A: 255}
-			case 2:
-				col = rl.Color{R: 80, G: 200, B: 255, A: 255}
-			case 3:
-				col = rl.Color{R: 255, G: 200, B: 50, A: 255}
+				model = lootModels.HealthPotion
+				tint = rl.Color{R: 255, G: 200, B: 200, A: 255}
+				particleCol = rl.Color{R: 255, G: 60, B: 60, A: 255}
+			case 1: // common — coin
+				model = lootModels.Coin
+				tint = rl.Color{R: 200, G: 200, B: 220, A: 255}
+				particleCol = rl.Color{R: 180, G: 180, B: 200, A: 255}
+			case 2: // uncommon — loot sack
+				model = lootModels.LootSack
+				tint = rl.Color{R: 150, G: 220, B: 255, A: 255}
+				particleCol = rl.Color{R: 80, G: 200, B: 255, A: 255}
+			case 3: // rare — artifact
+				model = lootModels.Artifact
+				tint = rl.Color{R: 255, G: 230, B: 120, A: 255}
+				particleCol = rl.Color{R: 255, G: 200, B: 50, A: 255}
+			default:
+				model = lootModels.Coin
 			}
+		} else {
+			model = lootModels.Coin
 		}
-		rl.DrawCube(dropPos, tileUnit*0.25, tileUnit*0.25, tileUnit*0.25, col)
-		// Glow
-		glowPos := dropPos
-		glowPos.Y = floorSurfaceY + 0.02
+
+		spin := drop.Timer * 60.0
+		scaleVec := rl.Vector3{X: lootScale, Y: lootScale, Z: lootScale}
+		rl.DrawModelEx(model, dropPos, rl.Vector3{Y: 1}, spin, scaleVec, tint)
+
+		// Rising particles
+		for p := 0; p < 3; p++ {
+			phase := drop.Timer*2.0 + float32(p)*2.1
+			life := float32(math.Mod(float64(phase), 1.0))
+			angle := float32(p) * 2.09 // ~120° apart
+			radius := tileUnit * 0.15
+			px := drop.X + float32(math.Cos(float64(angle+drop.Timer*1.5)))*radius
+			pz := drop.Z + float32(math.Sin(float64(angle+drop.Timer*1.5)))*radius
+			py := floorSurfaceY + life*tileUnit*0.6
+			alpha := uint8((1.0 - life) * 200)
+			size := tileUnit * 0.04 * (1.0 - life*0.5)
+			rl.DrawSphere(rl.Vector3{X: px, Y: py, Z: pz}, size,
+				rl.Color{R: particleCol.R, G: particleCol.G, B: particleCol.B, A: alpha})
+		}
+
+		// Ground glow
+		glowPos := rl.Vector3{X: drop.X, Y: floorSurfaceY + 0.02, Z: drop.Z}
 		pulse := float32(math.Sin(float64(drop.Timer)*2.0))*0.3 + 0.7
 		rl.DrawCubeV(glowPos, rl.Vector3{X: tileUnit * 0.5 * pulse, Y: 0.02, Z: tileUnit * 0.5 * pulse},
-			rl.Color{R: col.R, G: col.G, B: col.B, A: uint8(40 * pulse)})
+			rl.Color{R: particleCol.R, G: particleCol.G, B: particleCol.B, A: uint8(40 * pulse)})
 	}
 
 	// Explosions
