@@ -49,10 +49,53 @@ type EnemySpawn struct {
 	Type EnemyType
 }
 
+// Prop IDs — indexes into PropModels.Models
+const (
+	PropBarrel = iota
+	PropBarrelDark
+	PropCrate
+	PropCrateDark
+	PropBucket
+	PropPots
+	PropWeaponRack
+	PropBench
+	PropTableMedium
+	PropStool
+	PropBanner
+	PropBookcaseFilled
+	PropBookcaseWideFilled
+	PropTableSmall
+	PropBookA
+	PropBookOpenA
+	PropSpellBook
+	PropTableLarge
+	PropChair
+	PropMug
+	PropPlate
+	PropPlateFull
+	PropPillar
+	PropPillarBroken
+	PropBricks
+	PropFloorDecoShattered
+	PropTileSpikes
+	PropTileSpikesLarge
+	PropTorchWall
+	PropFloorDecoTiles
+	PropCount
+)
+
+type Prop struct {
+	Model    int
+	Rotation float32
+	Wall     int  // -1=center, 0=N, 1=S, 2=W, 3=E
+	Blocking bool
+}
+
 type RoomDef struct {
 	Tiles   [RoomH][RoomW]TileType
 	Doors   [DoorCount]bool
 	Spawns  []EnemySpawn
+	Props   map[[2]int]Prop
 	Depth   int
 	Cleared bool
 }
@@ -137,11 +180,13 @@ func GenerateRoom(rng *rand.Rand, coord RoomCoord, depth int, requiredDoors [Doo
 		}
 	}
 
-	// Place interior obstacles based on depth
+	// Place interior obstacles and props
+	room.Props = make(map[[2]int]Prop)
 	if !isStartRoom {
 		placeObstacles(rng, room, depth)
 		placeEnemies(rng, room, depth, coord)
 	}
+	placeProps(rng, room)
 
 	if isStartRoom {
 		room.Cleared = true
@@ -283,4 +328,173 @@ func NeighborCoord(from RoomCoord, dir DoorDir) RoomCoord {
 		return RoomCoord{from.X - 1, from.Z}
 	}
 	return from
+}
+
+// --- Room themes and prop placement ---
+
+type roomTheme int
+
+const (
+	themeDungeon roomTheme = iota
+	themeStorage
+	themeLibrary
+	themeCrypt
+)
+
+type propPalette struct {
+	wallProps    []int
+	centerProps  []int
+	wallChance   float64
+	centerChance float64
+}
+
+var themePalettes = map[roomTheme]propPalette{
+	themeDungeon: {
+		wallProps:    []int{PropWeaponRack, PropBench, PropTorchWall, PropBanner},
+		centerProps:  []int{PropStool, PropBricks, PropFloorDecoTiles},
+		wallChance:   0.25,
+		centerChance: 0.08,
+	},
+	themeStorage: {
+		wallProps:    []int{PropBarrel, PropBarrelDark, PropCrate, PropCrateDark},
+		centerProps:  []int{PropBucket, PropPots},
+		wallChance:   0.40,
+		centerChance: 0.12,
+	},
+	themeLibrary: {
+		wallProps:    []int{PropBookcaseFilled, PropBookcaseWideFilled, PropTableSmall},
+		centerProps:  []int{PropBookA, PropBookOpenA, PropSpellBook},
+		wallChance:   0.35,
+		centerChance: 0.12,
+	},
+	themeCrypt: {
+		wallProps:    []int{PropPillar, PropPillarBroken, PropTorchWall},
+		centerProps:  []int{PropBanner, PropFloorDecoShattered, PropFloorDecoTiles},
+		wallChance:   0.30,
+		centerChance: 0.10,
+	},
+}
+
+func pickTheme(rng *rand.Rand) roomTheme {
+	themes := []roomTheme{themeDungeon, themeStorage, themeLibrary, themeCrypt}
+	return themes[rng.Intn(len(themes))]
+}
+
+func wallRotation(wallDir int) float32 {
+	switch wallDir {
+	case 0:
+		return 180
+	case 1:
+		return 0
+	case 2:
+		return 90
+	case 3:
+		return -90
+	}
+	return 0
+}
+
+func placeProps(rng *rand.Rand, room *RoomDef) {
+	theme := pickTheme(rng)
+	pal := themePalettes[theme]
+
+	// Collect which tiles have enemy spawns
+	spawnTiles := map[[2]int]bool{}
+	for _, s := range room.Spawns {
+		spawnTiles[[2]int{int(s.X), int(s.Z)}] = true
+	}
+
+	// Collect door tiles to keep clear
+	doorZone := map[[2]int]bool{}
+	for d := DoorDir(0); d < DoorCount; d++ {
+		if !room.Doors[d] {
+			continue
+		}
+		tiles := doorTiles(d)
+		for _, t := range tiles {
+			// Mark door tile and neighbors as clear
+			for dz := -1; dz <= 1; dz++ {
+				for dx := -1; dx <= 1; dx++ {
+					doorZone[[2]int{t[0] + dx, t[1] + dz}] = true
+				}
+			}
+		}
+	}
+
+	for z := 1; z < RoomH-1; z++ {
+		for x := 1; x < RoomW-1; x++ {
+			if room.Tiles[z][x] != TileFloor {
+				continue
+			}
+			key := [2]int{x, z}
+			if spawnTiles[key] || doorZone[key] {
+				continue
+			}
+
+			// Check if adjacent to a wall
+			isWallAdj := false
+			wallDir := -1
+			dirs := [][2]int{{0, -1}, {0, 1}, {-1, 0}, {1, 0}}
+			for i, d := range dirs {
+				nx, nz := x+d[0], z+d[1]
+				if nx >= 0 && nx < RoomW && nz >= 0 && nz < RoomH {
+					if room.Tiles[nz][nx] == TileWall {
+						isWallAdj = true
+						wallDir = i
+						break
+					}
+				}
+			}
+
+			if isWallAdj && len(pal.wallProps) > 0 && rng.Float64() < pal.wallChance {
+				model := pal.wallProps[rng.Intn(len(pal.wallProps))]
+				room.Props[key] = Prop{
+					Model:    model,
+					Rotation: wallRotation(wallDir),
+					Wall:     wallDir,
+					Blocking: true,
+				}
+			} else if !isWallAdj && len(pal.centerProps) > 0 && rng.Float64() < pal.centerChance {
+				model := pal.centerProps[rng.Intn(len(pal.centerProps))]
+				room.Props[key] = Prop{
+					Model:    model,
+					Rotation: float32(rng.Intn(4)) * 90,
+					Wall:     -1,
+					Blocking: false,
+				}
+			}
+		}
+	}
+
+	// Always place torches on a few wall-adjacent spots for atmosphere
+	torchCount := 2 + rng.Intn(3)
+	placed := 0
+	for attempt := 0; attempt < 50 && placed < torchCount; attempt++ {
+		x := 1 + rng.Intn(RoomW-2)
+		z := 1 + rng.Intn(RoomH-2)
+		if room.Tiles[z][x] != TileFloor {
+			continue
+		}
+		key := [2]int{x, z}
+		if _, exists := room.Props[key]; exists {
+			continue
+		}
+		if doorZone[key] {
+			continue
+		}
+		// Must be adjacent to wall
+		for i, d := range [][2]int{{0, -1}, {0, 1}, {-1, 0}, {1, 0}} {
+			nx, nz := x+d[0], z+d[1]
+			if nx >= 0 && nx < RoomW && nz >= 0 && nz < RoomH && room.Tiles[nz][nx] == TileWall {
+				room.Props[key] = Prop{
+					Model:    PropTorchWall,
+					Rotation: wallRotation(i),
+					Wall:     i,
+					Blocking: false,
+				}
+				placed++
+				break
+			}
+		}
+	}
 }

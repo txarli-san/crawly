@@ -933,7 +933,13 @@ func (g *GameState) isTileWalkable(tx, tz int) bool {
 		return false
 	}
 	t := g.CurrentRoom.Tiles[tz][tx]
-	return t == TileFloor || t == TileDoorOpen
+	if t != TileFloor && t != TileDoorOpen {
+		return false
+	}
+	if p, ok := g.CurrentRoom.Props[[2]int{tx, tz}]; ok && p.Blocking {
+		return false
+	}
+	return true
 }
 
 func (g *GameState) resolveWallCollision(x, z, radius float32) (float32, float32) {
