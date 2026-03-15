@@ -426,9 +426,17 @@ func drawScene(
 		}
 		ePos := rl.Vector3{X: e.X, Y: charYOffset, Z: e.Z}
 
-		// Status effect tint
+		// Tint from status effects + systemic tags
 		tint := rl.White
-		if e.FireTimer > 0 {
+		if e.Tags.Has(TagFrenzied) {
+			tint = rl.Color{R: 255, G: 40, B: 100, A: 255}
+		} else if e.Tags.Has(TagCornered) {
+			tint = rl.Color{R: 255, G: 100, B: 40, A: 255}
+		} else if e.Tags.Has(TagBloodhound) {
+			tint = rl.Color{R: 200, G: 30, B: 30, A: 255}
+		} else if e.Tags.Has(TagAggressive) {
+			tint = rl.Color{R: 255, G: 80, B: 80, A: 255}
+		} else if e.FireTimer > 0 {
 			tint = rl.Color{R: 255, G: 150, B: 80, A: 255}
 		} else if e.IceTimer > 0 {
 			tint = rl.Color{R: 150, G: 200, B: 255, A: 255}
@@ -436,9 +444,18 @@ func drawScene(
 			tint = rl.Color{R: 100, G: 255, B: 100, A: 255}
 		}
 
-		wantClip := "Idle_Combat"
-		if e.Moving {
-			wantClip = "Walking_A"
+		wantClip := "Idle"
+		if e.State == StateIdle {
+			if e.Moving {
+				wantClip = "Walking_A"
+			} else {
+				wantClip = "Idle"
+			}
+		} else {
+			wantClip = "Idle_Combat"
+			if e.Moving {
+				wantClip = "Walking_A"
+			}
 		}
 		if e.Anim.Clip != wantClip {
 			e.Anim = AnimState{Clip: wantClip, Loop: true}
@@ -615,6 +632,27 @@ func drawScene(
 		rl.DrawText(fmt.Sprintf("Dodge: %.1f", p.DodgeCooldown), barX, barY+24, 14, rl.Gray)
 	} else {
 		rl.DrawText("Dodge: Ready [Space/RMB]", barX, barY+24, 14, rl.Color{R: 100, G: 255, B: 100, A: 255})
+	}
+
+	// Active player tags — bottom left, above HP
+	tagY := barY - 20
+	for _, tid := range p.Tags.List() {
+		meta := tagMeta[tid]
+		col := rl.Color{R: meta.Tint[0], G: meta.Tint[1], B: meta.Tint[2], A: 255}
+		rl.DrawText("["+meta.Name+"]", barX, tagY, 12, col)
+		tagY -= 14
+	}
+
+	// Room tags — top left under score
+	if game.CurrentRoom != nil {
+		roomTagX := int32(10)
+		roomTagY := int32(35)
+		for _, tid := range game.CurrentRoom.Tags.List() {
+			meta := tagMeta[tid]
+			col := rl.Color{R: meta.Tint[0], G: meta.Tint[1], B: meta.Tint[2], A: 180}
+			rl.DrawText(meta.Name, roomTagX, roomTagY, 12, col)
+			roomTagX += rl.MeasureText(meta.Name, 12) + 10
+		}
 	}
 
 	// Item pickup message

@@ -33,7 +33,17 @@ type Player struct {
 	Moving        bool
 	Anim          AnimState
 	VisibleMeshes []bool
+	Tags          TagSet
+	KillStreak    int     // kills this room, for berserk tracking
+	TimeSinceHit  float32 // for stealthy tracking
 }
+
+type EnemyState int
+
+const (
+	StateIdle    EnemyState = iota // unaware, patrolling
+	StateChasing                  // detected player, pursuing
+)
 
 type Enemy struct {
 	X, Z         float32
@@ -48,6 +58,11 @@ type Enemy struct {
 	Alive        bool
 	Moving       bool
 	Anim         AnimState
+	Tags         TagSet
+	State        EnemyState
+	DetectRadius float32 // how far this enemy can see (in tiles)
+	IdleAngle    float32 // patrol wander direction
+	IdleTimer    float32 // time until next patrol direction change
 
 	// Status effects
 	FireTimer   float32
@@ -162,7 +177,7 @@ func NewGame(seed int64, tileUnit, floorSurfaceY float32) *GameState {
 	// Generate start room
 	startCoord := RoomCoord{0, 0}
 	var noDoors [DoorCount]bool
-	startRoom := GenerateRoom(rng, startCoord, 0, noDoors)
+	startRoom := GenerateRoom(rng, startCoord, 0, noDoors, nil)
 	g.RoomMap[startCoord] = startRoom
 	g.CurrentRoom = startRoom
 	g.RoomCoord = startCoord
@@ -174,7 +189,9 @@ func NewGame(seed int64, tileUnit, floorSurfaceY float32) *GameState {
 		HP:    BaseHP,
 		MaxHP: BaseHP,
 		Stats: ComputeStats(nil),
+		Tags:  NewTagSet(),
 	}
+	g.Player.Tags.Apply(TagStealthy) // start stealthy until first hit
 	g.Player.VisibleMeshes = playerVisibleMeshes()
 
 	return g
@@ -242,12 +259,35 @@ func (g *GameState) updatePlaying(dt float32) {
 	g.tickFloats(dt)
 	g.tickDrops(dt)
 
+	// Tick player tags
+	p := &g.Player
+	p.Tags.Tick(dt)
+	p.TimeSinceHit += dt
+
+	// Bleeding DoT
+	if p.Tags.Has(TagBleeding) {
+		p.HP -= int(math.Ceil(float64(dt * 0.5))) // ~0.5 HP/sec
+		if p.HP < 1 && p.Tags.Has(TagBleeding) {
+			p.HP = 1 // bleeding can't kill, just leaves you at 1
+		}
+	}
+
+	// Stealthy: maintained while not hit for 5+ seconds
+	if p.TimeSinceHit > 5.0 && !p.Tags.Has(TagStealthy) {
+		p.Tags.Apply(TagStealthy)
+	}
+
+	// Overcharged: too many items
+	if len(p.Items) >= 15 && !p.Tags.Has(TagOvercharged) {
+		p.Tags.Apply(TagOvercharged)
+	}
+
 	if g.MessageTimer > 0 {
 		g.MessageTimer -= dt
 	}
 
 	// Check death
-	if g.Player.HP <= 0 {
+	if p.HP <= 0 {
 		g.Phase = PhaseDead
 		g.DeathTimer = 1.5
 	}
@@ -309,11 +349,25 @@ func (g *GameState) updateEnemies(dt float32) {
 	tu := g.TileUnit
 	p := &g.Player
 
+	// Count alive/dead for tag evaluation
+	aliveCount, deadCount := 0, 0
+	for i := range g.Enemies {
+		if g.Enemies[i].Alive {
+			aliveCount++
+		} else {
+			deadCount++
+		}
+	}
+
 	for i := range g.Enemies {
 		e := &g.Enemies[i]
 		if !e.Alive {
 			continue
 		}
+
+		// Evaluate systemic tags
+		EvaluateEnemyTags(e, &p.Tags, aliveCount, deadCount)
+		e.Tags.Tick(dt)
 
 		// Status effect ticks
 		if e.FireTimer > 0 {
@@ -336,10 +390,26 @@ func (g *GameState) updateEnemies(dt float32) {
 			e.IceTimer -= dt
 		}
 
-		// Slow factor from ice
+		// Speed/damage modifiers from tags
 		speedMult := float32(1.0)
+		damageMult := float32(1.0)
 		if e.IceTimer > 0 {
 			speedMult = 0.35
+		}
+		if e.Tags.Has(TagAggressive) {
+			speedMult *= 1.3
+			damageMult *= 1.3
+		}
+		if e.Tags.Has(TagFrenzied) {
+			speedMult *= 1.5
+			damageMult *= 1.5
+		}
+		if e.Tags.Has(TagCornered) {
+			speedMult *= 1.6 // desperate speed
+			damageMult *= 0.7 // but less accurate
+		}
+		if e.Tags.Has(TagBloodhound) {
+			speedMult *= 1.2
 		}
 
 		// AI
@@ -348,12 +418,51 @@ func (g *GameState) updateEnemies(dt float32) {
 		dist := float32(math.Sqrt(float64(ddx*ddx + ddz*ddz)))
 		e.AttackTimer -= dt
 
-		if dist > 0.1*tu {
-			ndx := ddx / dist
-			ndz := ddz / dist
-			e.FacingAngle = float32(math.Atan2(float64(ndx), float64(ndz))) * 180 / math.Pi
+		// Detection: idle enemies must detect player first
+		if e.State == StateIdle {
+			detectDist := e.DetectRadius * tu
+			if p.Tags.Has(TagStealthy) {
+				detectDist *= 0.5 // stealthy = harder to detect
+			}
+			if p.Tags.Has(TagLoud) {
+				detectDist *= 2.0 // loud = easy to detect
+			}
+			if dist < detectDist {
+				e.State = StateChasing
+				e.Tags.Apply(TagAlert)
+				// Alert nearby allies
+				g.alertNearby(i, 4.0*tu)
+			} else {
+				// Idle patrol: wander slowly
+				e.IdleTimer -= dt
+				if e.IdleTimer <= 0 {
+					e.IdleAngle = float32(g.Rng.Float64()) * 360
+					e.IdleTimer = 1.5 + float32(g.Rng.Float64())*2.0
+				}
+				idleSpeed := e.Speed * 0.25 * tu * speedMult * dt
+				idleRad := e.IdleAngle * math.Pi / 180
+				mx := float32(math.Sin(float64(idleRad))) * idleSpeed
+				mz := float32(math.Cos(float64(idleRad))) * idleSpeed
+				nx, nz := g.resolveWallCollision(e.X+mx, e.Z+mz, colliderRadius*tu)
+				if nx != e.X+mx || nz != e.Z+mz {
+					e.IdleTimer = 0 // hit wall, pick new direction
+				}
+				e.X, e.Z = nx, nz
+				e.FacingAngle = e.IdleAngle
+				e.Moving = true
+				continue
+			}
+		}
 
-			switch e.Type {
+		if dist < 0.1*tu {
+			continue
+		}
+
+		ndx := ddx / dist
+		ndz := ddz / dist
+		e.FacingAngle = float32(math.Atan2(float64(ndx), float64(ndz))) * 180 / math.Pi
+
+		switch e.Type {
 			case EnemyMinion, EnemyWarrior:
 				// Melee: always chase into the player
 				e.X += ndx * e.Speed * tu * speedMult * dt
@@ -364,54 +473,84 @@ func (g *GameState) updateEnemies(dt float32) {
 				// Melee attack on contact
 				contactDist := colliderRadius * tu * 2.2
 				if dist < contactDist && e.AttackTimer <= 0 {
-					e.AttackTimer = e.AttackRate
-					g.damagePlayer(e.Damage)
-					// Knockback: push player away
+					rate := e.AttackRate
+					if e.Tags.Has(TagCornered) {
+						rate *= 0.5 // desperate flailing
+					}
+					e.AttackTimer = rate
+					g.damagePlayer(int(float32(e.Damage) * damageMult))
+					// Knockback
 					p.X += ndx * tu * 0.4
 					p.Z += ndz * tu * 0.4
 					p.X, p.Z = g.resolveWallCollision(p.X, p.Z, colliderRadius*tu)
 				}
 
 			case EnemyMage:
-				// Ranged: keep distance, strafe, shoot
 				preferDist := float32(4.0) * tu
-				if dist < preferDist*0.7 {
-					// Too close — flee
+				// Cornered mages stop retreating — spray and pray
+				if e.Tags.Has(TagCornered) {
+					preferDist = 2.0 * tu
+				}
+
+				if dist < preferDist*0.7 && !e.Tags.Has(TagCornered) {
 					e.X -= ndx * e.Speed * tu * speedMult * dt
 					e.Z -= ndz * e.Speed * tu * speedMult * dt
 					e.Moving = true
 				} else if dist > preferDist*1.3 {
-					// Too far — approach
 					e.X += ndx * e.Speed * tu * speedMult * dt
 					e.Z += ndz * e.Speed * tu * speedMult * dt
 					e.Moving = true
 				} else {
-					// Good range — strafe perpendicular
 					perpX := -ndz
 					perpZ := ndx
-					// Alternate strafe direction based on index
 					if i%2 == 0 {
 						perpX = ndz
 						perpZ = -ndx
 					}
-					e.X += perpX * e.Speed * tu * speedMult * 0.6 * dt
-					e.Z += perpZ * e.Speed * tu * speedMult * 0.6 * dt
+					strafeSpeed := float32(0.6)
+					if e.Tags.Has(TagCornered) || e.Tags.Has(TagFrenzied) {
+						strafeSpeed = 1.0 // erratic movement
+					}
+					e.X += perpX * e.Speed * tu * speedMult * strafeSpeed * dt
+					e.Z += perpZ * e.Speed * tu * speedMult * strafeSpeed * dt
 					e.Moving = true
 				}
 				e.X, e.Z = g.resolveWallCollision(e.X, e.Z, colliderRadius*tu)
 
 				// Shoot projectile
 				if e.AttackTimer <= 0 && dist < e.AttackRange*tu {
-					e.AttackTimer = e.AttackRate
+					rate := e.AttackRate
+					if e.Tags.Has(TagCornered) {
+						rate *= 0.4 // rapid fire when cornered
+					}
+					if e.Tags.Has(TagFrenzied) {
+						rate *= 0.6
+					}
+					e.AttackTimer = rate
 					speed := float32(8.0) * tu
-					g.Projectiles = append(g.Projectiles, Projectile{
-						X: e.X, Z: e.Z,
-						VX: ndx * speed, VZ: ndz * speed,
-						Damage: float32(e.Damage), Radius: 0.1 * tu,
-						Alive: true, Owner: 1,
-					})
+					dmg := float32(e.Damage) * damageMult
+
+					// Cornered mages spray multiple projectiles
+					shots := 1
+					if e.Tags.Has(TagCornered) {
+						shots = 3
+					}
+					for s := 0; s < shots; s++ {
+						spread := float32(0)
+						if shots > 1 {
+							spread = (float32(s) - float32(shots-1)/2.0) * 0.3
+						}
+						angle := float32(math.Atan2(float64(ndx), float64(ndz))) + spread
+						vx := float32(math.Sin(float64(angle))) * speed
+						vz := float32(math.Cos(float64(angle))) * speed
+						g.Projectiles = append(g.Projectiles, Projectile{
+							X: e.X, Z: e.Z,
+							VX: vx, VZ: vz,
+							Damage: dmg, Radius: 0.1 * tu,
+							Alive: true, Owner: 1,
+						})
+					}
 				}
-			}
 		}
 
 		// Enemy-enemy separation
@@ -429,6 +568,18 @@ func (g *GameState) updateEnemies(dt float32) {
 				e.Z += (oz / odist) * push
 			}
 		}
+	}
+}
+
+// Noise from shooting alerts nearby idle enemies.
+func (g *GameState) makeNoise(wx, wz float32) {
+	noiseRadius := float32(6.0) * g.TileUnit
+	if g.Player.Tags.Has(TagStealthy) {
+		noiseRadius *= 0.5
+	}
+	g.alertAllInRadius(wx, wz, noiseRadius)
+	if !g.Player.Tags.Has(TagStealthy) {
+		g.Player.Tags.Apply(TagLoud)
 	}
 }
 
@@ -563,7 +714,7 @@ func (g *GameState) checkCollisions() {
 			ddz := e.Z - proj.Z
 			dist := float32(math.Sqrt(float64(ddx*ddx + ddz*ddz)))
 			if dist < (proj.Radius+colliderRadius*tu) {
-				// Hit!
+				// Direct hit — consistent damage
 				dmg := int(proj.Damage)
 				e.HP -= dmg
 				g.AddFloat(fmt.Sprintf("-%d", dmg), e.X, e.Z, 255, 255, 200, 16)
@@ -713,6 +864,12 @@ func (g *GameState) damagePlayer(dmg int) {
 	}
 	p.HP -= dmg
 	p.InvulnTimer = 0.8
+	p.TimeSinceHit = 0
+	p.Tags.Remove(TagStealthy)
+	p.Tags.Apply(TagWounded)
+	if dmg >= 2 {
+		p.Tags.Apply(TagBleeding)
+	}
 	g.AddFloat(fmt.Sprintf("-%d", dmg), p.X, p.Z, 255, 60, 60, 20)
 }
 
@@ -721,6 +878,11 @@ func (g *GameState) killEnemy(idx int) {
 	e.Alive = false
 	g.Score += 10 * (int(e.Type) + 1)
 	g.AddFloat("SLAIN", e.X, e.Z, 255, 200, 60, 16)
+
+	// Tag propagation: kill consequences
+	g.Player.KillStreak++
+	PropagateKillTags(g.Rng, &g.Player.Tags, &g.CurrentRoom.Tags, g.Player.KillStreak,
+		g.Player.Stats.FireStacks > 0, g.Player.Stats.IceStacks > 0, g.Player.Stats.PoisonStacks > 0)
 
 	// Health drop chance (20%) — instant heal, separate from items
 	if g.Rng.Float64() < 0.20 {
@@ -844,17 +1006,23 @@ func (g *GameState) finishTransition() {
 		var required [DoorCount]bool
 		required[dir.Opposite()] = true
 		depth := g.RoomsCleared
-		room = GenerateRoom(g.Rng, newCoord, depth, required)
+		room = GenerateRoom(g.Rng, newCoord, depth, required, &g.Player.Tags)
 		g.RoomMap[newCoord] = room
 	}
 
 	g.CurrentRoom = room
 	g.RoomCoord = newCoord
 
-	// Spawn enemies
+	// Spawn enemies with tags
 	g.Enemies = g.Enemies[:0]
+	g.Player.KillStreak = 0
 	for _, spawn := range room.Spawns {
-		g.Enemies = append(g.Enemies, makeEnemy(spawn, g.TileUnit, room.Depth))
+		enemy := makeEnemy(spawn, g.TileUnit, room.Depth)
+		if spawn.Alert {
+			enemy.Tags.Apply(TagAlert)
+			enemy.Tags.Apply(TagAggressive)
+		}
+		g.Enemies = append(g.Enemies, enemy)
 	}
 
 	// Clear projectiles and drops from previous room
@@ -879,6 +1047,7 @@ func makeEnemy(spawn EnemySpawn, tileUnit float32, depth int) Enemy {
 		Z:     spawn.Z * tileUnit,
 		Type:  spawn.Type,
 		Alive: true,
+		Tags:  NewTagSet(),
 	}
 
 	// Scale stats with depth
@@ -892,6 +1061,7 @@ func makeEnemy(spawn EnemySpawn, tileUnit float32, depth int) Enemy {
 		e.Damage = 1
 		e.AttackRange = 1.2
 		e.AttackRate = 0.8
+		e.DetectRadius = 4.0
 	case EnemyWarrior:
 		e.HP = int(float64(12) * hpScale)
 		e.MaxHP = e.HP
@@ -899,6 +1069,7 @@ func makeEnemy(spawn EnemySpawn, tileUnit float32, depth int) Enemy {
 		e.Damage = 2
 		e.AttackRange = 1.5
 		e.AttackRate = 1.2
+		e.DetectRadius = 5.0
 	case EnemyMage:
 		e.HP = int(float64(5) * hpScale)
 		e.MaxHP = e.HP
@@ -906,9 +1077,44 @@ func makeEnemy(spawn EnemySpawn, tileUnit float32, depth int) Enemy {
 		e.Damage = 2
 		e.AttackRange = 6.0
 		e.AttackRate = 1.8
+		e.DetectRadius = 6.0
 	}
 
 	return e
+}
+
+// alertNearby wakes up idle enemies within radius of enemy at index idx.
+func (g *GameState) alertNearby(idx int, radius float32) {
+	src := &g.Enemies[idx]
+	for j := range g.Enemies {
+		if j == idx || !g.Enemies[j].Alive || g.Enemies[j].State != StateIdle {
+			continue
+		}
+		dx := g.Enemies[j].X - src.X
+		dz := g.Enemies[j].Z - src.Z
+		dist := float32(math.Sqrt(float64(dx*dx + dz*dz)))
+		if dist < radius {
+			g.Enemies[j].State = StateChasing
+			g.Enemies[j].Tags.Apply(TagAlert)
+		}
+	}
+}
+
+// alertAllInRadius wakes up idle enemies near a world position (e.g. from shooting noise).
+func (g *GameState) alertAllInRadius(wx, wz, radius float32) {
+	for i := range g.Enemies {
+		e := &g.Enemies[i]
+		if !e.Alive || e.State != StateIdle {
+			continue
+		}
+		dx := e.X - wx
+		dz := e.Z - wz
+		dist := float32(math.Sqrt(float64(dx*dx + dz*dz)))
+		if dist < radius {
+			e.State = StateChasing
+			e.Tags.Apply(TagAlert)
+		}
+	}
 }
 
 // SpawnPlayerProjectiles creates projectiles based on current item stats.
@@ -917,6 +1123,9 @@ func (g *GameState) SpawnPlayerProjectiles(aimDX, aimDZ float32) {
 	tu := g.TileUnit
 	stats := &p.Stats
 	speed := stats.ProjSpeed * tu
+
+	// Shooting makes noise — alerts idle enemies
+	g.makeNoise(p.X, p.Z)
 
 	count := stats.ProjCount
 	baseAngle := float32(math.Atan2(float64(aimDX), float64(aimDZ)))
