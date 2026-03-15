@@ -753,6 +753,21 @@ func drawScene(
 		rl.DrawSphere(expPos, radius*0.6, rl.Color{R: 255, G: 255, B: 200, A: alpha})
 	}
 
+	// Spark particles (additive blend)
+	if len(game.Particles) > 0 {
+		rl.BeginBlendMode(rl.BlendAdditive)
+		for i := range game.Particles {
+			p := &game.Particles[i]
+			t := p.Life / p.MaxLife
+			pos := rl.Vector3{X: p.X, Y: p.Y, Z: p.Z}
+			// Outer glow
+			rl.DrawSphere(pos, p.Size*3.0*t, rl.Color{R: p.R, G: p.G, B: p.B, A: uint8(80 * t)})
+			// Core
+			rl.DrawSphere(pos, p.Size*t, rl.Color{R: 255, G: 255, B: 240, A: uint8(255 * t)})
+		}
+		rl.EndBlendMode()
+	}
+
 	rl.EndMode3D()
 
 	// --- 2D HUD ---

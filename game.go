@@ -138,6 +138,35 @@ type FloatingText struct {
 	FontSize int32
 }
 
+// ---------- Particles ----------
+
+type Particle struct {
+	X, Y, Z    float32
+	VX, VY, VZ float32
+	Life       float32
+	MaxLife    float32
+	Size       float32
+	R, G, B    uint8
+}
+
+func (gs *GameState) SpawnSparks(wx, wz float32, count int, cr, cg, cb uint8) {
+	for i := 0; i < count; i++ {
+		angle := gs.Rng.Float64() * 6.283
+		speed := 1.0 + gs.Rng.Float64()*3.0
+		vy := 2.0 + gs.Rng.Float64()*4.0
+		life := float32(0.3 + gs.Rng.Float64()*0.4)
+		gs.Particles = append(gs.Particles, Particle{
+			X: wx, Y: gs.FloorSurfaceY + gs.TileUnit*0.3, Z: wz,
+			VX: float32(speed * math.Cos(angle)) * gs.TileUnit,
+			VY: float32(vy) * gs.TileUnit,
+			VZ: float32(speed * math.Sin(angle)) * gs.TileUnit,
+			Life: life, MaxLife: life,
+			Size: gs.TileUnit * 0.08,
+			R: cr, G: cg, B: cb,
+		})
+	}
+}
+
 // ---------- Audio events ----------
 
 type SFXEvent int
@@ -173,6 +202,7 @@ type GameState struct {
 	ItemDrops   []ItemDrop
 	Explosions  []Explosion
 	Floats      []FloatingText
+	Particles   []Particle
 
 	CurrentRoom *RoomDef
 	RoomCoord   RoomCoord
@@ -305,6 +335,7 @@ func (g *GameState) updatePlaying(dt float32) {
 	g.updateProjectiles(dt)
 	g.updateExplosions(dt)
 	g.checkCollisions()
+	g.tickParticles(dt)
 	g.checkRoomCleared()
 	g.checkDoorTransition()
 	g.tickFloats(dt)
@@ -728,6 +759,7 @@ func (g *GameState) checkCollisions() {
 			if dist < (proj.Radius+colliderRadius*tu) {
 				// Direct hit
 				g.EmitSFX(SFXEnemyHit)
+				g.SpawnSparks(e.X, e.Z, 10, 255, 220, 150)
 				dmg := int(proj.Damage)
 				e.HP -= dmg
 				e.HitFlash = 0.1
@@ -943,6 +975,7 @@ func (g *GameState) killEnemy(idx int) {
 	e.Alive = false
 	e.DeathTimer = 1.0 // show death animation for 1 second
 	g.EmitSFX(SFXEnemyDeath)
+	g.SpawnSparks(e.X, e.Z, 25, 255, 100, 50)
 	g.Score += 10 * (int(e.Type) + 1)
 	g.AddFloat("SLAIN", e.X, e.Z, 255, 200, 60, 16)
 
@@ -1260,6 +1293,7 @@ func (g *GameState) updateMeleeAttack(dt float32) {
 		// Hit!
 		p.MeleeHit[i] = true
 		g.EmitSFX(SFXMeleeHit)
+		g.SpawnSparks(e.X, e.Z, 12, 255, 200, 100)
 		dmg := int(p.Stats.Damage)
 		e.HP -= dmg
 		e.HitFlash = 0.15
@@ -1434,6 +1468,23 @@ func (g *GameState) tickFloats(dt float32) {
 		}
 	}
 	g.Floats = alive
+}
+
+func (g *GameState) tickParticles(dt float32) {
+	alive := g.Particles[:0]
+	for i := range g.Particles {
+		p := &g.Particles[i]
+		p.Life -= dt
+		if p.Life <= 0 {
+			continue
+		}
+		p.X += p.VX * dt
+		p.Y += p.VY * dt
+		p.Z += p.VZ * dt
+		p.VY -= 12.0 * g.TileUnit * dt // gravity
+		alive = append(alive, *p)
+	}
+	g.Particles = alive
 }
 
 func (g *GameState) tickDrops(dt float32) {
