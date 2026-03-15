@@ -173,6 +173,7 @@ func main() {
 	// --- Main Loop ---
 	for !rl.WindowShouldClose() {
 		dt := rl.GetFrameTime()
+		audio.Update()
 
 		// Update view pos for shader
 		viewPos := []float32{camera.Position.X, camera.Position.Y, camera.Position.Z}

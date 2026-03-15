@@ -46,6 +46,8 @@ type AudioSystem struct {
 	BlockParry  SFXGroup
 	Dodge       SFXGroup
 	UISelect    SFXGroup
+
+	Ambient rl.Music
 }
 
 const audioBase = "assets/audio/"
@@ -109,10 +111,20 @@ func LoadAudio() *AudioSystem {
 		ui + "click1.ogg", ui + "click2.ogg", ui + "click3.ogg",
 	}, 0.5)
 
+	a.Ambient = rl.LoadMusicStream(audioBase + "ambient/dark_cavern_loop.ogg")
+	a.Ambient.Looping = true
+	rl.SetMusicVolume(a.Ambient, 0.3)
+	rl.PlayMusicStream(a.Ambient)
+
 	return a
 }
 
+func (a *AudioSystem) Update() {
+	rl.UpdateMusicStream(a.Ambient)
+}
+
 func (a *AudioSystem) Unload() {
+	rl.UnloadMusicStream(a.Ambient)
 	a.MeleeSwing.Unload()
 	a.MeleeHit.Unload()
 	a.MageCast.Unload()
