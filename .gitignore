@@ -2,3 +2,4 @@ crawly
 *.exe
 *.test
 *.out
+dist/
