@@ -40,6 +40,10 @@ func main() {
 	rl.SetExitKey(0)
 	rl.SetTargetFPS(60)
 
+	// --- Audio ---
+	audio := LoadAudio()
+	defer audio.Unload()
+
 	// --- Shader ---
 	shader := rl.LoadShaderFromMemory(lightingVS, lightingFS)
 	defer rl.UnloadShader(shader)
@@ -182,13 +186,16 @@ func main() {
 			drawTitle(selectedClass)
 			if rl.IsKeyPressed(rl.KeyA) || rl.IsKeyPressed(rl.KeyLeft) {
 				selectedClass = (selectedClass + 1) % 2
+				audio.UISelect.Play()
 			}
 			if rl.IsKeyPressed(rl.KeyD) || rl.IsKeyPressed(rl.KeyRight) {
 				selectedClass = (selectedClass + 1) % 2
+				audio.UISelect.Play()
 			}
 			if rl.IsKeyPressed(rl.KeySpace) {
 				initGame(selectedClass)
 				phase = PhasePlaying
+				audio.UISelect.Play()
 			}
 
 		case PhasePlaying, PhaseTransition:
@@ -261,6 +268,7 @@ func main() {
 						p.DodgeTimer = dodgeDuration
 						p.InvulnTimer = dodgeDuration + 0.1
 						p.DodgeCooldown = dodgeCooldownTime
+						game.EmitSFX(SFXDodge)
 					}
 				case ClassWarrior:
 					// Warrior: hold RMB/Space to block, tap to parry
@@ -273,6 +281,31 @@ func main() {
 
 			// Update game
 			game.Update(dt)
+
+			// Play queued SFX
+			for _, sfx := range game.SFXQueue {
+				switch sfx {
+				case SFXMeleeSwing:
+					audio.MeleeSwing.Play()
+				case SFXMeleeHit:
+					audio.MeleeHit.Play()
+				case SFXMageCast:
+					audio.MageCast.Play()
+				case SFXEnemyHit:
+					audio.EnemyHit.Play()
+				case SFXEnemyDeath:
+					audio.EnemyDeath.Play()
+				case SFXPlayerHit:
+					audio.PlayerHit.Play()
+				case SFXItemPickup:
+					audio.ItemPickup.Play()
+				case SFXBlockParry:
+					audio.BlockParry.Play()
+				case SFXDodge:
+					audio.Dodge.Play()
+				}
+			}
+			game.SFXQueue = game.SFXQueue[:0]
 
 			// Sync outer phase
 			phase = game.Phase

@@ -138,6 +138,22 @@ type FloatingText struct {
 	FontSize int32
 }
 
+// ---------- Audio events ----------
+
+type SFXEvent int
+
+const (
+	SFXMeleeSwing SFXEvent = iota
+	SFXMeleeHit
+	SFXMageCast
+	SFXEnemyHit
+	SFXEnemyDeath
+	SFXPlayerHit
+	SFXItemPickup
+	SFXBlockParry
+	SFXDodge
+)
+
 // ---------- Game state ----------
 
 type GamePhase int
@@ -176,6 +192,8 @@ type GameState struct {
 
 	TileUnit      float32
 	FloorSurfaceY float32
+
+	SFXQueue []SFXEvent
 }
 
 func NewGame(seed int64, tileUnit, floorSurfaceY float32, class PlayerClass) *GameState {
@@ -234,6 +252,10 @@ func playerVisibleMeshes(class PlayerClass) []bool {
 		return v
 	}
 	return nil
+}
+
+func (g *GameState) EmitSFX(e SFXEvent) {
+	g.SFXQueue = append(g.SFXQueue, e)
 }
 
 func (g *GameState) SetMessage(msg string) {
@@ -705,6 +727,7 @@ func (g *GameState) checkCollisions() {
 			dist := float32(math.Sqrt(float64(ddx*ddx + ddz*ddz)))
 			if dist < (proj.Radius+colliderRadius*tu) {
 				// Direct hit
+				g.EmitSFX(SFXEnemyHit)
 				dmg := int(proj.Damage)
 				e.HP -= dmg
 				e.HitFlash = 0.1
@@ -811,6 +834,7 @@ func (g *GameState) checkCollisions() {
 		dist := float32(math.Sqrt(float64(ddx*ddx + ddz*ddz)))
 		if dist < pickupRadius*tu {
 			drop.Collected = true
+			g.EmitSFX(SFXItemPickup)
 
 			if drop.Item == &healthPickup {
 				// Health potion — instant heal
@@ -850,6 +874,7 @@ func (g *GameState) damagePlayer(dmg int) {
 	if p.Stats.ShieldStacks > 0 {
 		p.Stats.ShieldStacks--
 		g.AddFloat("BLOCKED", p.X, p.Z, 100, 200, 255, 18)
+		g.EmitSFX(SFXBlockParry)
 		p.InvulnTimer = 0.3
 		return
 	}
@@ -859,6 +884,7 @@ func (g *GameState) damagePlayer(dmg int) {
 		if p.ParryWindow > 0 {
 			// Perfect parry — negate damage, stagger nearby enemies
 			g.AddFloat("PARRY!", p.X, p.Z, 255, 255, 100, 22)
+			g.EmitSFX(SFXBlockParry)
 			p.InvulnTimer = 0.3
 			p.ParryWindow = 0
 			p.BlockTimer = 0
@@ -869,6 +895,7 @@ func (g *GameState) damagePlayer(dmg int) {
 			// Regular block — halve damage (min 1)
 			dmg = (dmg + 1) / 2
 			g.AddFloat("BLOCK", p.X, p.Z, 180, 200, 255, 16)
+			g.EmitSFX(SFXBlockParry)
 			p.InvulnTimer = 0.15
 			p.HP -= dmg
 			p.TimeSinceHit = 0
@@ -884,6 +911,7 @@ func (g *GameState) damagePlayer(dmg int) {
 	p.HP -= dmg
 	p.InvulnTimer = 0.8
 	p.TimeSinceHit = 0
+	g.EmitSFX(SFXPlayerHit)
 	g.AddFloat(fmt.Sprintf("-%d", dmg), p.X, p.Z, 255, 60, 60, 20)
 
 	// Thorns: reflect damage to nearby enemies
@@ -914,6 +942,7 @@ func (g *GameState) killEnemy(idx int) {
 	e := &g.Enemies[idx]
 	e.Alive = false
 	e.DeathTimer = 1.0 // show death animation for 1 second
+	g.EmitSFX(SFXEnemyDeath)
 	g.Score += 10 * (int(e.Type) + 1)
 	g.AddFloat("SLAIN", e.X, e.Z, 255, 200, 60, 16)
 
@@ -1174,6 +1203,7 @@ func (g *GameState) StartMeleeAttack() {
 	p.MeleeCooldown = p.Stats.MeleeCooldown
 	p.MeleeHit = make(map[int]bool)
 	g.makeNoise(p.X, p.Z)
+	g.EmitSFX(SFXMeleeSwing)
 
 	// Dash-strike: lunge forward into enemies
 	angle := p.FacingAngle * math.Pi / 180
@@ -1229,6 +1259,7 @@ func (g *GameState) updateMeleeAttack(dt float32) {
 
 		// Hit!
 		p.MeleeHit[i] = true
+		g.EmitSFX(SFXMeleeHit)
 		dmg := int(p.Stats.Damage)
 		e.HP -= dmg
 		e.HitFlash = 0.15
@@ -1283,6 +1314,7 @@ func (g *GameState) updateMeleeAttack(dt float32) {
 
 // SpawnPlayerProjectiles creates projectiles based on current item stats.
 func (g *GameState) SpawnPlayerProjectiles(aimDX, aimDZ float32) {
+	g.EmitSFX(SFXMageCast)
 	p := &g.Player
 	tu := g.TileUnit
 	stats := &p.Stats
