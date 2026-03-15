@@ -181,12 +181,13 @@ func NewGame(seed int64, tileUnit, floorSurfaceY float32) *GameState {
 }
 
 func playerVisibleMeshes() []bool {
-	// Fighter: body meshes (9-14) + sword (5)
-	v := make([]bool, 15)
-	for i := 9; i <= 14; i++ {
+	// Mage: body meshes (6-11) + wand (2) + cape (5)
+	v := make([]bool, 12)
+	for i := 6; i <= 11; i++ {
 		v[i] = true
 	}
-	v[5] = true // 1H_Sword
+	v[2] = true // 1H_Wand
+	v[5] = true // Cape
 	return v
 }
 

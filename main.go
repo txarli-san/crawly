@@ -74,10 +74,10 @@ func main() {
 	defer rl.UnloadModel(wallModel)
 	applyShaderToModel(wallModel, shader)
 
-	// Animated character models
-	knightAnim := loadAnimatedModel("assets/models/characters/animated/Knight.glb")
-	defer knightAnim.Unload()
-	knightAnim.GearBindings = gearBindings("Fighter")
+	// Animated character models — Mage for the player (projectile shooter)
+	mageAnim := loadAnimatedModel("assets/models/characters/animated/Mage.glb")
+	defer mageAnim.Unload()
+	mageAnim.GearBindings = gearBindings("Mage")
 
 	skelMinionAnim := loadAnimatedModel("assets/models/characters/animated/Skeleton_Minion.glb")
 	defer skelMinionAnim.Unload()
@@ -101,28 +101,19 @@ func main() {
 	wallWidth := wallBBox.Max.X - wallBBox.Min.X
 	wallScale := tileUnit / wallWidth
 
-	charBBox := rl.GetModelBoundingBox(*knightAnim.Model)
-	charScale := (tileUnit * 0.6) / (charBBox.Max.X - charBBox.Min.X)
+	charBBox := rl.GetModelBoundingBox(*mageAnim.Model)
+	charScale := (tileUnit * 1.4) / (charBBox.Max.X - charBBox.Min.X)
 	charYOffset := floorSurfaceY - charBBox.Min.Y*charScale
 
-	// --- Camera: top-down with slight angle ---
+	// --- Camera: isometric-style angle (~55° elevation) ---
 	roomCenterX := float32(RoomW) * tileUnit / 2.0
 	roomCenterZ := float32(RoomH) * tileUnit / 2.0
 
-	// Calculate camera height to show the entire room
-	fovRad := float32(45.0) * math.Pi / 180.0
-	halfFovTan := float32(math.Tan(float64(fovRad / 2.0)))
-	aspect := float32(screenWidth) / float32(screenHeight)
-	hForH := (float32(RoomH) * tileUnit / 2.0) / halfFovTan
-	hForW := (float32(RoomW) * tileUnit / 2.0) / (halfFovTan * aspect)
-	camHeight := hForH
-	if hForW > camHeight {
-		camHeight = hForW
-	}
-	camHeight *= 1.15 // padding
-
-	// Slight tilt offset (~80 degrees from horizontal)
-	camOffsetZ := camHeight * 0.18
+	// Camera distance calculated to fit the room width on screen
+	camElevation := float32(55.0) * math.Pi / 180.0 // 55° from ground
+	camDist := float32(RoomW) * tileUnit * 1.0 // distance from target
+	camHeight := camDist * float32(math.Sin(float64(camElevation)))
+	camOffsetZ := camDist * float32(math.Cos(float64(camElevation)))
 
 	camera := rl.Camera3D{
 		Position:   rl.Vector3{X: roomCenterX, Y: camHeight, Z: roomCenterZ + camOffsetZ},
@@ -249,7 +240,7 @@ func main() {
 				camera, game, dt,
 				tileUnit, floorSurfaceY, charYOffset, charScale, wallScale,
 				floorModel, floorCrackedA, floorCrackedB, wallModel,
-				knightAnim, skelModels,
+				mageAnim, skelModels,
 			)
 
 			// Transition overlay
@@ -265,7 +256,7 @@ func main() {
 					camera, game, 0,
 					tileUnit, floorSurfaceY, charYOffset, charScale, wallScale,
 					floorModel, floorCrackedA, floorCrackedB, wallModel,
-					knightAnim, skelModels,
+					mageAnim, skelModels,
 				)
 				drawDeath(game)
 

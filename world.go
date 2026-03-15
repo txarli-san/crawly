@@ -5,8 +5,8 @@ import (
 )
 
 const (
-	RoomW = 23 // total room width in tiles (including walls)
-	RoomH = 15 // total room height in tiles (including walls)
+	RoomW = 15 // total room width in tiles (including walls)
+	RoomH = 11 // total room height in tiles (including walls)
 )
 
 type TileType int
@@ -151,10 +151,10 @@ func GenerateRoom(rng *rand.Rand, coord RoomCoord, depth int, requiredDoors [Doo
 }
 
 func placeObstacles(rng *rand.Rand, room *RoomDef, depth int) {
-	// Number of pillars scales with depth
-	numPillars := 2 + rng.Intn(3) + depth/3
-	if numPillars > 12 {
-		numPillars = 12
+	// Number of pillars scales with depth (tuned for smaller rooms)
+	numPillars := 1 + rng.Intn(2) + depth/4
+	if numPillars > 6 {
+		numPillars = 6
 	}
 
 	for i := 0; i < numPillars; i++ {
@@ -206,10 +206,10 @@ func placeObstacles(rng *rand.Rand, room *RoomDef, depth int) {
 }
 
 func placeEnemies(rng *rand.Rand, room *RoomDef, depth int, coord RoomCoord) {
-	// Enemy count scales with depth
-	baseCount := 2 + depth/2
-	if baseCount > 8 {
-		baseCount = 8
+	// Enemy count scales with depth (tuned for smaller rooms)
+	baseCount := 2 + depth/3
+	if baseCount > 5 {
+		baseCount = 5
 	}
 	count := baseCount + rng.Intn(2)
 
