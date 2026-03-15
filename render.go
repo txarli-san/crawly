@@ -301,7 +301,7 @@ func drawScene(
 	floorModel rl.Model,
 	floorCrackedA, floorCrackedB rl.Model,
 	wallModel rl.Model,
-	heroModel *AnimatedModel,
+	heroModels map[PlayerClass]*AnimatedModel,
 	skelModels map[EnemyType]*AnimatedModel,
 	propModels *PropModels,
 ) {
@@ -493,8 +493,32 @@ func drawScene(
 	if p.Anim.Clip != wantClip {
 		p.Anim = AnimState{Clip: wantClip, Loop: true}
 	}
+	heroModel := heroModels[game.Player.Class]
 	heroModel.UpdateAnim(&p.Anim, dt)
 	heroModel.DrawFiltered(p.VisibleMeshes, playerPos, rl.Vector3{Y: 1}, p.FacingAngle, charScaleVec, playerTint)
+
+	// Melee arc visualization
+	if p.MeleeTimer > 0 && p.Class != ClassMage {
+		arcAlpha := uint8(float32(150) * (p.MeleeTimer / 0.2))
+		arcRange := p.Stats.MeleeRange * tileUnit
+		halfArc := p.Stats.MeleeArc / 2.0
+		segments := 8
+		baseAngle := p.FacingAngle * math.Pi / 180
+		for s := 0; s < segments; s++ {
+			a1 := baseAngle + float32(math.Pi/180)*(-halfArc+halfArc*2*float32(s)/float32(segments))
+			a2 := baseAngle + float32(math.Pi/180)*(-halfArc+halfArc*2*float32(s+1)/float32(segments))
+			x1 := p.X + float32(math.Sin(float64(a1)))*arcRange
+			z1 := p.Z + float32(math.Cos(float64(a1)))*arcRange
+			x2 := p.X + float32(math.Sin(float64(a2)))*arcRange
+			z2 := p.Z + float32(math.Cos(float64(a2)))*arcRange
+			arcY := floorSurfaceY + 0.03
+			v1 := rl.Vector3{X: p.X, Y: arcY, Z: p.Z}
+			v2 := rl.Vector3{X: x1, Y: arcY, Z: z1}
+			v3 := rl.Vector3{X: x2, Y: arcY, Z: z2}
+			arcCol := rl.Color{R: 255, G: 200, B: 100, A: arcAlpha}
+			rl.DrawTriangle3D(v1, v3, v2, arcCol)
+		}
+	}
 
 	// Draw projectiles
 	for i := range game.Projectiles {
@@ -628,10 +652,27 @@ func drawScene(
 		rl.DrawText("Dodge: Ready [Space/RMB]", barX, barY+24, 14, rl.Color{R: 100, G: 255, B: 100, A: 255})
 	}
 
+	// Class name
+	classNames := []string{"Mage", "Warrior"}
+	classColors := []rl.Color{
+		{R: 100, G: 150, B: 255, A: 255},
+		{R: 255, G: 100, B: 80, A: 255},
+	}
+	rl.DrawText(classNames[p.Class], barX, barY-36, 16, classColors[p.Class])
+
 	// Stealth indicator
 	stealthy := p.TimeSinceHit > 5.0 && p.FireTimer <= 0
 	if stealthy {
-		rl.DrawText("Stealth", barX, barY-18, 14, rl.Color{R: 100, G: 200, B: 180, A: 255})
+		rl.DrawText("Stealth", barX+80, barY-36, 14, rl.Color{R: 100, G: 200, B: 180, A: 255})
+	}
+
+	// Melee cooldown (Warrior/Rogue)
+	if p.Class != ClassMage {
+		if p.MeleeCooldown > 0 {
+			rl.DrawText(fmt.Sprintf("Attack: %.1f", p.MeleeCooldown), barX+140, barY+24, 14, rl.Gray)
+		} else {
+			rl.DrawText("Attack: Ready", barX+140, barY+24, 14, rl.Color{R: 255, G: 200, B: 100, A: 255})
+		}
 	}
 
 	// Item pickup message
@@ -663,24 +704,78 @@ func drawScene(
 	rl.DrawFPS(screenWidth-90, screenHeight-25)
 }
 
-func drawTitle() {
+func drawTitle(selected PlayerClass) {
 	rl.DrawRectangle(0, 0, screenWidth, screenHeight, rl.Color{R: 5, G: 5, B: 10, A: 255})
 	title := "C R A W L Y"
 	tw := rl.MeasureText(title, 48)
-	rl.DrawText(title, (screenWidth-tw)/2, screenHeight/2-80, 48, rl.Color{R: 255, G: 200, B: 60, A: 255})
+	rl.DrawText(title, (screenWidth-tw)/2, 80, 48, rl.Color{R: 255, G: 200, B: 60, A: 255})
 
 	sub := "Twin-Stick Dungeon Crawler"
 	sw := rl.MeasureText(sub, 20)
-	rl.DrawText(sub, (screenWidth-sw)/2, screenHeight/2-20, 20, rl.Color{R: 180, G: 180, B: 200, A: 255})
+	rl.DrawText(sub, (screenWidth-sw)/2, 140, 20, rl.Color{R: 180, G: 180, B: 200, A: 255})
 
-	start := "[Space] Begin Descent"
-	stw := rl.MeasureText(start, 20)
+	// Class cards
+	type classCard struct {
+		name  string
+		desc  string
+		stats string
+		col   rl.Color
+	}
+	cards := []classCard{
+		{"Mage", "Ranged spellcaster", "HP: 6  SPD: 5  DMG: 3  |  Projectiles", rl.Color{R: 100, G: 150, B: 255, A: 255}},
+		{"Warrior", "Heavy melee fighter", "HP: 10  SPD: 4  DMG: 5  |  Wide arc", rl.Color{R: 255, G: 100, B: 80, A: 255}},
+	}
+
+	cardW := int32(300)
+	cardH := int32(120)
+	gap := int32(20)
+	totalW := cardW*int32(len(cards)) + gap*int32(len(cards)-1)
+	startX := (screenWidth - totalW) / 2
+	cardY := int32(220)
+
+	for i, card := range cards {
+		x := startX + int32(i)*(cardW+gap)
+		isSelected := PlayerClass(i) == selected
+
+		// Background
+		bgCol := rl.Color{R: 20, G: 20, B: 30, A: 200}
+		borderCol := rl.Color{R: 60, G: 60, B: 80, A: 255}
+		if isSelected {
+			bgCol = rl.Color{R: 30, G: 30, B: 50, A: 230}
+			borderCol = card.col
+		}
+		rl.DrawRectangle(x, cardY, cardW, cardH, bgCol)
+		rl.DrawRectangleLines(x, cardY, cardW, cardH, borderCol)
+
+		// Name
+		nameCol := rl.Color{R: 120, G: 120, B: 140, A: 255}
+		if isSelected {
+			nameCol = card.col
+		}
+		ntw := rl.MeasureText(card.name, 24)
+		rl.DrawText(card.name, x+cardW/2-ntw/2, cardY+12, 24, nameCol)
+
+		// Desc
+		dtw := rl.MeasureText(card.desc, 14)
+		rl.DrawText(card.desc, x+cardW/2-dtw/2, cardY+44, 14, rl.Color{R: 160, G: 160, B: 180, A: 255})
+
+		// Stats
+		stw := rl.MeasureText(card.stats, 12)
+		rl.DrawText(card.stats, x+cardW/2-stw/2, cardY+70, 12, rl.Color{R: 140, G: 140, B: 160, A: 255})
+
+		// Selected indicator
+		if isSelected {
+			pulse := uint8(float64(200) + math.Sin(float64(rl.GetTime())*3)*55)
+			rl.DrawRectangleLines(x-2, cardY-2, cardW+4, cardH+4,
+				rl.Color{R: card.col.R, G: card.col.G, B: card.col.B, A: pulse})
+		}
+	}
+
+	// Controls
+	controls := "A/D select  |  Space begin"
+	cw := rl.MeasureText(controls, 18)
 	pulse := uint8(float64(180) + math.Sin(float64(rl.GetTime())*3)*75)
-	rl.DrawText(start, (screenWidth-stw)/2, screenHeight/2+40, 20, rl.Color{R: pulse, G: pulse, B: pulse, A: 255})
-
-	controls := "WASD move  |  Mouse aim  |  LMB shoot  |  Space dodge"
-	cw := rl.MeasureText(controls, 16)
-	rl.DrawText(controls, (screenWidth-cw)/2, screenHeight/2+100, 16, rl.Color{R: 100, G: 100, B: 120, A: 255})
+	rl.DrawText(controls, (screenWidth-cw)/2, cardY+cardH+40, 18, rl.Color{R: pulse, G: pulse, B: pulse, A: 255})
 }
 
 func drawDeath(game *GameState) {

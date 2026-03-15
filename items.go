@@ -97,43 +97,57 @@ var AllItemDefs = []ItemDef{
 		Tags: itags(int(TagPoison), 1, int(TagHoming), 1)},
 }
 
-// PlayerStats computed from accumulated item tags.
+// PlayerStats computed from class base + accumulated item tags.
 type PlayerStats struct {
 	Damage    float32
 	Speed     float32
-	FireRate  float32 // shots per second
+	FireRate  float32 // shots per second (Mage)
 	MaxHP     int
-	ProjCount int     // total projectiles per shot
-	ProjSpeed float32 // projectile speed
-	ProjSize  float32 // projectile radius
+	ProjCount int     // projectiles per shot (Mage)
+	ProjSpeed float32
+	ProjSize  float32
+
+	// Melee (Warrior/Rogue)
+	MeleeArc      float32 // degrees
+	MeleeRange    float32 // in tile units
+	MeleeCooldown float32 // seconds
+	NoiseRadius   float32 // tiles
 
 	// Tag stacks
-	FireStacks    int
-	IceStacks     int
-	PoisonStacks  int
-	PierceCount   int
-	BounceCount   int
-	HomingStacks  int
-	VampiricStacks int
+	FireStacks      int
+	IceStacks       int
+	PoisonStacks    int
+	PierceCount     int
+	BounceCount     int
+	HomingStacks    int
+	VampiricStacks  int
 	ExplosiveStacks int
-	ShieldStacks  int
-	ChainStacks   int
-	GiantStacks   int
+	ShieldStacks    int
+	ChainStacks     int
+	GiantStacks     int
 }
 
-// Base player stats
-const (
-	BaseDamage    = 3.0
-	BaseSpeed     = 5.0
-	BaseFireRate  = 3.0 // 3 shots/sec
-	BaseHP        = 6
-	BaseProjSpeed = 14.0
-	BaseProjSize  = 0.08
-)
+// ComputeStats calculates effective stats from class + collected items.
+func ComputeStats(class PlayerClass, items []*ItemDef) PlayerStats {
+	// Class base stats
+	var baseDmg, baseSpd, baseFireRate, baseProjSpd, baseProjSize float32
+	var baseHP int
+	var meleeArc, meleeRange, meleeCooldown, noiseRadius float32
 
-// ComputeStats calculates effective stats from a list of collected items.
-func ComputeStats(items []*ItemDef) PlayerStats {
-	// Accumulate all tags
+	switch class {
+	case ClassMage:
+		baseDmg, baseSpd, baseFireRate = 3.0, 5.0, 3.0
+		baseHP = 6
+		baseProjSpd, baseProjSize = 14.0, 0.08
+		noiseRadius = 6.0
+	case ClassWarrior:
+		baseDmg, baseSpd = 5.0, 4.0
+		baseHP = 10
+		meleeArc, meleeRange, meleeCooldown = 120, 1.8, 0.5
+		noiseRadius = 8.0
+	}
+
+	// Accumulate item tags
 	var tags [TagCount]int
 	for _, item := range items {
 		for i := 0; i < int(TagCount); i++ {
@@ -142,13 +156,17 @@ func ComputeStats(items []*ItemDef) PlayerStats {
 	}
 
 	s := PlayerStats{
-		Damage:    BaseDamage * (1.0 + 0.25*float32(tags[TagDamageUp])),
-		Speed:     BaseSpeed * (1.0 + 0.15*float32(tags[TagSpeedUp])),
-		FireRate:  BaseFireRate * (1.0 + 0.20*float32(tags[TagFireRateUp])),
-		MaxHP:     BaseHP + tags[TagMaxHPUp],
-		ProjCount: 1 + tags[TagSplit]*2,
-		ProjSpeed: BaseProjSpeed,
-		ProjSize:  BaseProjSize * (1.0 + 0.40*float32(tags[TagGiant])),
+		Damage:        baseDmg * (1.0 + 0.25*float32(tags[TagDamageUp])),
+		Speed:         baseSpd * (1.0 + 0.15*float32(tags[TagSpeedUp])),
+		FireRate:      baseFireRate * (1.0 + 0.20*float32(tags[TagFireRateUp])),
+		MaxHP:         baseHP + tags[TagMaxHPUp],
+		ProjCount:     1 + tags[TagSplit]*2,
+		ProjSpeed:     baseProjSpd,
+		ProjSize:      baseProjSize * (1.0 + 0.40*float32(tags[TagGiant])),
+		MeleeArc:      meleeArc,
+		MeleeRange:    meleeRange,
+		MeleeCooldown: meleeCooldown,
+		NoiseRadius:   noiseRadius,
 
 		FireStacks:      tags[TagFire],
 		IceStacks:       tags[TagIce],

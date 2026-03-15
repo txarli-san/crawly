@@ -74,10 +74,19 @@ func main() {
 	defer rl.UnloadModel(wallModel)
 	applyShaderToModel(wallModel, shader)
 
-	// Animated character models — Mage for the player (projectile shooter)
+	// Animated character models
 	mageAnim := loadAnimatedModel("assets/models/characters/animated/Mage.glb")
 	defer mageAnim.Unload()
 	mageAnim.GearBindings = gearBindings("Mage")
+
+	knightAnim := loadAnimatedModel("assets/models/characters/animated/Knight.glb")
+	defer knightAnim.Unload()
+	knightAnim.GearBindings = gearBindings("Fighter")
+
+	heroModels := map[PlayerClass]*AnimatedModel{
+		ClassMage:    mageAnim,
+		ClassWarrior: knightAnim,
+	}
 
 	skelMinionAnim := loadAnimatedModel("assets/models/characters/animated/Skeleton_Minion.glb")
 	defer skelMinionAnim.Unload()
@@ -141,10 +150,11 @@ func main() {
 
 	// --- Game state ---
 	var game *GameState
+	selectedClass := ClassMage
 
-	initGame := func() {
+	initGame := func(class PlayerClass) {
 		seed := time.Now().UnixNano()
-		game = NewGame(seed, tileUnit, floorSurfaceY)
+		game = NewGame(seed, tileUnit, floorSurfaceY, class)
 	}
 
 	phase := PhaseTitle
@@ -162,9 +172,15 @@ func main() {
 
 		switch phase {
 		case PhaseTitle:
-			drawTitle()
+			drawTitle(selectedClass)
+			if rl.IsKeyPressed(rl.KeyA) || rl.IsKeyPressed(rl.KeyLeft) {
+				selectedClass = (selectedClass + 1) % 2
+			}
+			if rl.IsKeyPressed(rl.KeyD) || rl.IsKeyPressed(rl.KeyRight) {
+				selectedClass = (selectedClass + 1) % 2
+			}
 			if rl.IsKeyPressed(rl.KeySpace) {
-				initGame()
+				initGame(selectedClass)
 				phase = PhasePlaying
 			}
 
@@ -187,11 +203,18 @@ func main() {
 					p.FacingAngle = float32(math.Atan2(float64(aimDX), float64(aimDZ))) * 180 / math.Pi
 				}
 
-				// Shooting
-				if game.Phase == PhasePlaying {
-					if rl.IsMouseButtonDown(rl.MouseButtonLeft) && p.FireTimer <= 0 {
-						game.SpawnPlayerProjectiles(aimDX, aimDZ)
-						p.FireTimer = 1.0 / p.Stats.FireRate
+				// Attack
+				if game.Phase == PhasePlaying && rl.IsMouseButtonDown(rl.MouseButtonLeft) {
+					switch p.Class {
+					case ClassMage:
+						if p.FireTimer <= 0 {
+							game.SpawnPlayerProjectiles(aimDX, aimDZ)
+							p.FireTimer = 1.0 / p.Stats.FireRate
+						}
+					case ClassWarrior:
+						if p.MeleeCooldown <= 0 && p.MeleeTimer <= 0 {
+							game.StartMeleeAttack()
+						}
 					}
 				}
 			}
@@ -243,7 +266,7 @@ func main() {
 				camera, game, dt,
 				tileUnit, floorSurfaceY, charYOffset, charScale, wallScale,
 				floorModel, floorCrackedA, floorCrackedB, wallModel,
-				mageAnim, skelModels, propModels,
+				heroModels, skelModels, propModels,
 			)
 
 			// Transition overlay
@@ -259,12 +282,12 @@ func main() {
 					camera, game, 0,
 					tileUnit, floorSurfaceY, charYOffset, charScale, wallScale,
 					floorModel, floorCrackedA, floorCrackedB, wallModel,
-					mageAnim, skelModels, propModels,
+					heroModels, skelModels, propModels,
 				)
 				drawDeath(game)
 
 				if game.DeathTimer <= 0 && rl.IsKeyPressed(rl.KeySpace) {
-					initGame()
+					initGame(selectedClass)
 					phase = PhasePlaying
 				}
 			}

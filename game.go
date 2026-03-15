@@ -16,24 +16,37 @@ const (
 	EnemyMage                     // ranged, squishy
 )
 
+// ---------- Player classes ----------
+
+type PlayerClass int
+
+const (
+	ClassMage    PlayerClass = iota // ranged projectiles
+	ClassWarrior                   // wide melee arc, tanky, loud
+)
+
 // ---------- Core entities ----------
 
 type Player struct {
 	X, Z          float32
 	FacingAngle   float32
 	HP, MaxHP     int
+	Class         PlayerClass
 	Items         []*ItemDef
 	Stats         PlayerStats
-	FireTimer     float32
-	DodgeTimer    float32 // >0 = currently dodging
-	DodgeCooldown float32 // >0 = can't dodge yet
-	InvulnTimer   float32 // >0 = invulnerable
+	FireTimer     float32 // ranged cooldown (Mage)
+	MeleeTimer    float32 // >0 = active swing
+	MeleeCooldown float32 // >0 = can't attack yet
+	MeleeHit      map[int]bool // enemies hit by current swing
+	DodgeTimer    float32
+	DodgeCooldown float32
+	InvulnTimer   float32
 	DodgeVX       float32
 	DodgeVZ       float32
 	Moving        bool
 	Anim          AnimState
 	VisibleMeshes []bool
-	TimeSinceHit  float32 // seconds since last damage taken
+	TimeSinceHit  float32
 }
 
 type EnemyState int
@@ -160,7 +173,7 @@ type GameState struct {
 	FloorSurfaceY float32
 }
 
-func NewGame(seed int64, tileUnit, floorSurfaceY float32) *GameState {
+func NewGame(seed int64, tileUnit, floorSurfaceY float32, class PlayerClass) *GameState {
 	rng := rand.New(rand.NewSource(seed))
 	g := &GameState{
 		Phase:         PhasePlaying,
@@ -180,27 +193,42 @@ func NewGame(seed int64, tileUnit, floorSurfaceY float32) *GameState {
 	g.RoomCoord = startCoord
 
 	// Place player at center
+	stats := ComputeStats(class, nil)
 	g.Player = Player{
 		X:     float32(RoomW) / 2.0 * tileUnit,
 		Z:     float32(RoomH) / 2.0 * tileUnit,
-		HP:    BaseHP,
-		MaxHP: BaseHP,
-		Stats: ComputeStats(nil),
+		HP:    stats.MaxHP,
+		MaxHP: stats.MaxHP,
+		Class: class,
+		Stats: stats,
 	}
-	g.Player.VisibleMeshes = playerVisibleMeshes()
+	g.Player.VisibleMeshes = playerVisibleMeshes(class)
 
 	return g
 }
 
-func playerVisibleMeshes() []bool {
-	// Mage: body meshes (6-11) + wand (2) + cape (5)
-	v := make([]bool, 12)
-	for i := 6; i <= 11; i++ {
-		v[i] = true
+func playerVisibleMeshes(class PlayerClass) []bool {
+	switch class {
+	case ClassMage:
+		v := make([]bool, 12)
+		for i := 6; i <= 11; i++ {
+			v[i] = true
+		}
+		v[2] = true // 1H_Wand
+		v[5] = true // Cape
+		return v
+	case ClassWarrior:
+		v := make([]bool, 15)
+		for i := 9; i <= 14; i++ {
+			v[i] = true
+		}
+		v[5] = true // 1H_Sword
+		v[3] = true // Round_Shield
+		v[7] = true // Helmet
+		v[8] = true // Cape
+		return v
 	}
-	v[2] = true // 1H_Wand
-	v[5] = true // Cape
-	return v
+	return nil
 }
 
 func (g *GameState) SetMessage(msg string) {
@@ -245,6 +273,7 @@ func (g *GameState) Update(dt float32) {
 
 func (g *GameState) updatePlaying(dt float32) {
 	g.updatePlayer(dt)
+	g.updateMeleeAttack(dt)
 	g.updateEnemies(dt)
 	g.updateProjectiles(dt)
 	g.updateExplosions(dt)
@@ -518,7 +547,7 @@ func (g *GameState) updateEnemies(dt float32) {
 
 // Noise from shooting alerts nearby idle enemies.
 func (g *GameState) makeNoise(wx, wz float32) {
-	noiseRadius := float32(6.0) * g.TileUnit
+	noiseRadius := g.Player.Stats.NoiseRadius * g.TileUnit
 	// Stealthy player makes less noise
 	stealthy := g.Player.TimeSinceHit > 5.0 && g.Player.FireTimer <= 0
 	if stealthy {
@@ -779,7 +808,7 @@ func (g *GameState) checkCollisions() {
 			}
 
 			p.Items = append(p.Items, drop.Item)
-			p.Stats = ComputeStats(p.Items)
+			p.Stats = ComputeStats(p.Class, p.Items)
 
 			// Apply max HP increase
 			if p.MaxHP < p.Stats.MaxHP {
@@ -872,7 +901,7 @@ func (g *GameState) checkRoomCleared() {
 	g.SetMessage("Room Cleared!")
 
 	// Reset shields for new room
-	g.Player.Stats.ShieldStacks = ComputeStats(g.Player.Items).ShieldStacks
+	g.Player.Stats.ShieldStacks = ComputeStats(g.Player.Class, g.Player.Items).ShieldStacks
 
 	for z := 0; z < RoomH; z++ {
 		for x := 0; x < RoomW; x++ {
@@ -968,7 +997,7 @@ func (g *GameState) finishTransition() {
 	g.Player.Z = entryZ * g.TileUnit
 
 	// Reset shields for new room
-	g.Player.Stats.ShieldStacks = ComputeStats(g.Player.Items).ShieldStacks
+	g.Player.Stats.ShieldStacks = ComputeStats(g.Player.Class, g.Player.Items).ShieldStacks
 
 	g.Phase = PhasePlaying
 }
@@ -1042,6 +1071,107 @@ func (g *GameState) alertAllInRadius(wx, wz, radius float32) {
 		dist := float32(math.Sqrt(float64(dx*dx + dz*dz)))
 		if dist < radius {
 			e.State = StateChasing
+		}
+	}
+}
+
+// ---------- Melee attack ----------
+
+func (g *GameState) StartMeleeAttack() {
+	p := &g.Player
+	p.MeleeTimer = 0.2
+	p.MeleeCooldown = p.Stats.MeleeCooldown
+	p.MeleeHit = make(map[int]bool)
+	g.makeNoise(p.X, p.Z)
+
+	// Dash-strike: short lunge forward
+	angle := p.FacingAngle * math.Pi / 180
+	lungeSpeed := float32(10.0) * g.TileUnit
+	p.DodgeVX = float32(math.Sin(float64(angle))) * lungeSpeed
+	p.DodgeVZ = float32(math.Cos(float64(angle))) * lungeSpeed
+	p.DodgeTimer = 0.08 // very short lunge, no i-frames
+}
+
+func (g *GameState) updateMeleeAttack(dt float32) {
+	p := &g.Player
+	if p.MeleeCooldown > 0 {
+		p.MeleeCooldown -= dt
+	}
+	if p.MeleeTimer <= 0 {
+		return
+	}
+	p.MeleeTimer -= dt
+
+	tu := g.TileUnit
+	meleeRange := p.Stats.MeleeRange * tu
+	halfArc := p.Stats.MeleeArc / 2.0
+
+	for i := range g.Enemies {
+		e := &g.Enemies[i]
+		if !e.Alive || p.MeleeHit[i] {
+			continue
+		}
+
+		dx := e.X - p.X
+		dz := e.Z - p.Z
+		dist := float32(math.Sqrt(float64(dx*dx + dz*dz)))
+		if dist > meleeRange {
+			continue
+		}
+
+		// Angle check
+		enemyAngle := float32(math.Atan2(float64(dx), float64(dz))) * 180 / math.Pi
+		angleDiff := enemyAngle - p.FacingAngle
+		// Wrap to [-180, 180]
+		for angleDiff > 180 {
+			angleDiff -= 360
+		}
+		for angleDiff < -180 {
+			angleDiff += 360
+		}
+		if angleDiff < 0 {
+			angleDiff = -angleDiff
+		}
+		if angleDiff > halfArc {
+			continue
+		}
+
+		// Hit!
+		p.MeleeHit[i] = true
+		dmg := int(p.Stats.Damage)
+		e.HP -= dmg
+		g.AddFloat(fmt.Sprintf("-%d", dmg), e.X, e.Z, 255, 255, 200, 16)
+
+		// Apply status effects from items
+		if p.Stats.FireStacks > 0 {
+			e.FireTimer = 3.0
+			e.FireDamage = float32(p.Stats.FireStacks) * 1.5
+		}
+		if p.Stats.IceStacks > 0 {
+			e.IceTimer = 2.0 + float32(p.Stats.IceStacks)*0.5
+		}
+		if p.Stats.PoisonStacks > 0 {
+			e.PoisonTimer = 4.0
+			e.PoisonDmg = float32(p.Stats.PoisonStacks) * 1.0
+		}
+
+		// Knockback
+		if dist > 0.01 {
+			e.X += (dx / dist) * tu * 0.5
+			e.Z += (dz / dist) * tu * 0.5
+			e.X, e.Z = g.resolveWallCollision(e.X, e.Z, colliderRadius*tu)
+		}
+
+		if e.HP <= 0 {
+			g.killEnemy(i)
+			if p.Stats.VampiricStacks > 0 {
+				heal := p.Stats.VampiricStacks
+				p.HP += heal
+				if p.HP > p.MaxHP {
+					p.HP = p.MaxHP
+				}
+				g.AddFloat(fmt.Sprintf("+%d", heal), p.X, p.Z, 80, 255, 80, 16)
+			}
 		}
 	}
 }
