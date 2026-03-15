@@ -426,8 +426,7 @@ func drawScene(
 		}
 		ePos := rl.Vector3{X: e.X, Y: charYOffset, Z: e.Z}
 
-		// Tint: status effects take priority (immediate feedback),
-		// then systemic tags as subtle shift (not distracting)
+		// Tint from status effects and awareness state
 		tint := rl.White
 		if e.FireTimer > 0 {
 			tint = rl.Color{R: 255, G: 150, B: 80, A: 255}
@@ -506,7 +505,7 @@ func drawScene(
 		projPos := rl.Vector3{X: proj.X, Y: floorSurfaceY + tileUnit*0.3, Z: proj.Z}
 		size := proj.Radius * 2
 		if proj.Owner == 0 {
-			// Player projectile color based on tags
+			// Player projectile color
 			col := rl.Color{R: 255, G: 255, B: 200, A: 255}
 			if proj.Fire {
 				col = rl.Color{R: 255, G: 120, B: 40, A: 255}

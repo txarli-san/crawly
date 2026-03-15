@@ -323,16 +323,6 @@ func (g *GameState) updateEnemies(dt float32) {
 	tu := g.TileUnit
 	p := &g.Player
 
-	// Count alive/dead for tag evaluation
-	aliveCount, deadCount := 0, 0
-	for i := range g.Enemies {
-		if g.Enemies[i].Alive {
-			aliveCount++
-		} else {
-			deadCount++
-		}
-	}
-
 	for i := range g.Enemies {
 		e := &g.Enemies[i]
 		if !e.Alive {
@@ -466,7 +456,7 @@ func (g *GameState) updateEnemies(dt float32) {
 						perpZ = -ndx
 					}
 					strafeSpeed := float32(0.6)
-					if cornered || false {
+					if cornered {
 						strafeSpeed = 1.0 // erratic movement
 					}
 					e.X += perpX * e.Speed * tu * speedMult * strafeSpeed * dt
@@ -480,9 +470,6 @@ func (g *GameState) updateEnemies(dt float32) {
 					rate := e.AttackRate
 					if cornered {
 						rate *= 0.4 // rapid fire when cornered
-					}
-					if false {
-						rate *= 0.6
 					}
 					e.AttackTimer = rate
 					speed := float32(8.0) * tu
@@ -1039,7 +1026,6 @@ func (g *GameState) alertNearby(idx int, radius float32) {
 		dist := float32(math.Sqrt(float64(dx*dx + dz*dz)))
 		if dist < radius {
 			g.Enemies[j].State = StateChasing
-			g.Enemies[j].State = StateChasing
 		}
 	}
 }
@@ -1055,7 +1041,6 @@ func (g *GameState) alertAllInRadius(wx, wz, radius float32) {
 		dz := e.Z - wz
 		dist := float32(math.Sqrt(float64(dx*dx + dz*dz)))
 		if dist < radius {
-			e.State = StateChasing
 			e.State = StateChasing
 		}
 	}
