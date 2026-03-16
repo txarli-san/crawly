@@ -13,7 +13,7 @@ linux:
 	cp -r assets $(DIST)/linux/assets
 
 windows:
-	CGO_ENABLED=1 GOOS=windows GOARCH=amd64 CC=x86_64-w64-mingw32-gcc go build -o $(DIST)/windows/$(NAME).exe .
+	CGO_ENABLED=1 GOOS=windows GOARCH=amd64 CC=x86_64-w64-mingw32-gcc go build -ldflags "-s -w -H windowsgui" -o $(DIST)/windows/$(NAME).exe .
 	cp -r assets $(DIST)/windows/assets
 
 dist: linux windows
