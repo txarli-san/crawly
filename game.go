@@ -102,8 +102,9 @@ type Projectile struct {
 	Fire      bool
 	Ice       bool
 	Poison    bool
-	Pierce    bool
+	Pierce     bool
 	PierceLeft int
+	PierceHit  map[int]bool // enemies already pierced through
 	Bounce    bool
 	BounceLeft int
 	Homing    bool
@@ -767,6 +768,9 @@ func (g *GameState) checkCollisions() {
 			if !e.Alive {
 				continue
 			}
+			if proj.PierceHit[j] {
+				continue
+			}
 			ddx := e.X - proj.X
 			ddz := e.Z - proj.Z
 			dist := float32(math.Sqrt(float64(ddx*ddx + ddz*ddz)))
@@ -837,9 +841,13 @@ func (g *GameState) checkCollisions() {
 					}
 				}
 
-				// Pierce
+				// Pierce — skip this enemy on future frames
 				if proj.Pierce && proj.PierceLeft > 0 {
 					proj.PierceLeft--
+					if proj.PierceHit == nil {
+						proj.PierceHit = make(map[int]bool)
+					}
+					proj.PierceHit[j] = true
 					continue // Don't kill the projectile
 				}
 
